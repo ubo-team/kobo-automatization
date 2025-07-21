@@ -3,7 +3,7 @@ from PIL import Image
 import os
 
 st.set_page_config(page_title="Përkthim Zyrtar", layout="centered")
-logo_path = "UBO Logo.svg"  
+logo_path = "logo.png"  
 
 with st.sidebar:
     if os.path.exists(logo_path):
