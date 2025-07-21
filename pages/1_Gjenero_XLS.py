@@ -110,6 +110,9 @@ def generate_xlsform(input_docx, output_xlsx):
             continue
 
         q_type, matrix_count = extract_type_and_count(line)
+        if not q_type:
+            raise ValueError("Formatimi i Word dokumentit nuk është valid.")
+
         is_random = has_random_tag(line)
         parameters = "randomize=true" if is_random else None
 
