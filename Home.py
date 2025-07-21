@@ -4,7 +4,7 @@ import os
 
 
 st.set_page_config(
-    page_title="Platforma për Menaxhimin e Pyetësorëve",
+    page_title="Platforma për Automatizimin e Kodimit të Pyetësorëve",
     layout="centered",
 )
 
@@ -27,7 +27,7 @@ with st.sidebar:
         </style>
     """, unsafe_allow_html=True)
 
-st.title("Platforma për Menaxhimin e Pyetësorëve")
+st.title("Platforma për Automatizimin e Kodimit të Pyetësorëve")
 st.markdown("---")
 
 st.markdown("Zgjidh një nga veglat më poshtë për të vazhduar:")
