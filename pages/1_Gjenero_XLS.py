@@ -20,7 +20,6 @@ st.title("Gjenero XLS")
 st.markdown("Ngarko dokumentin `.docx` dhe gjenero formularin XLS për përdorim në Kobo Toolbox.")
 
 uploaded_file = st.file_uploader("Zgjidh një dokument `.docx` të formatuar:", type=["docx"])
-#file_name = os.path.splitext(uploaded_file.name)[0]
 
 def sanitize_name(label):
     return re.sub(r'\W+', '_', label.lower().strip())[:30]
@@ -318,21 +317,25 @@ def generate_xlsform(input_docx, output_xlsx):
 # Streamlit Logic
 # -------------------------------
 def process_uploaded_docx(file):
-    temp_xlsx_path = os.path.join(tempfile.gettempdir(), f"gjeneruar.xlsx")
+    base_name = os.path.splitext(file.name)[0]
+    generated_name = f"{base_name}_gjeneruar.xlsx"
+    temp_xlsx_path = os.path.join(tempfile.gettempdir(), generated_name)
+
     with tempfile.NamedTemporaryFile(delete=False, suffix=".docx") as tmp:
         tmp.write(file.read())
         tmp.flush()
         generate_xlsform(tmp.name, temp_xlsx_path)
-    return temp_xlsx_path
 
+    return temp_xlsx_path, generated_name
+    
 if uploaded_file:
     with st.spinner("Po përpunon dokumentin..."):
-        xlsx_path = process_uploaded_docx(uploaded_file)
+        xlsx_path, generated_file_name = process_uploaded_docx(uploaded_file)
         with open(xlsx_path, "rb") as f:
             st.success("XLSForm u gjenerua me sukses!")
             st.download_button(
                 label="Shkarko XLSForm-in",
                 data=f,
-                file_name="Kobo_Gjeneruar.xlsx",
+                file_name=generated_file_name,
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
