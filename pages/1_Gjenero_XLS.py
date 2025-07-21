@@ -14,16 +14,20 @@ logo_path = "UBO Logo.svg"
 
 with st.sidebar:
     if os.path.exists(logo_path):
-        st.image(Image.open(logo_path), width=150)
+        with open(logo_path, "r") as f:
+            svg = f.read()
+
+        st.markdown(f"""
+            <div style="display: flex; justify-content: center; margin: 15px 0;">
+                {svg}
+            </div>
+        """, unsafe_allow_html=True)
 
     st.markdown("""
         <style>
-        [data-testid="stSidebar"] img {
-            display: block;
-            margin-left: auto;
-            margin-right: auto;
-            margin-top: 15px;
-            margin-bottom: 15px;
+        [data-testid="stSidebar"] svg {
+            max-width: 150px;
+            height: auto;
         }
         </style>
     """, unsafe_allow_html=True)
