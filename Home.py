@@ -4,7 +4,7 @@ import os
 
 
 st.set_page_config(
-    page_title="Vegla Pyetësorësh",
+    page_title="Platforma për Menaxhimin e Pyetësorëve",
     layout="centered",
 )
 
