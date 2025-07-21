@@ -10,7 +10,7 @@ from PIL import Image
 st.set_page_config(page_title="Gjenero XLS", layout="centered")
 
 
-logo_path = "UBO Logo.png"  
+logo_path = "logo.png"  
 
 with st.sidebar:
     if os.path.exists(logo_path):
