@@ -10,27 +10,11 @@ from PIL import Image
 st.set_page_config(page_title="Gjenero XLS", layout="centered")
 
 
-logo_path = "UBO Logo.svg"  
+logo_path = "UBO Logo.png"  
 
 with st.sidebar:
     if os.path.exists(logo_path):
-        with open(logo_path, "r") as f:
-            svg = f.read()
-
-        st.markdown(f"""
-            <div style="display: flex; justify-content: center; margin: 15px 0;">
-                {svg}
-            </div>
-        """, unsafe_allow_html=True)
-
-    st.markdown("""
-        <style>
-        [data-testid="stSidebar"] svg {
-            max-width: 150px;
-            height: auto;
-        }
-        </style>
-    """, unsafe_allow_html=True)
+        st.image(Image.open(logo_path), width=150)
 
 st.title("Gjenero XLS")
 st.markdown("Ngarko dokumentin `.docx` dhe gjenero formularin XLS për përdorim në Kobo Toolbox.")
