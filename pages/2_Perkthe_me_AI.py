@@ -9,7 +9,7 @@ import os
 st.set_page_config(page_title="Përkthe me AI", layout="centered")
 
 
-logo_path = "logo.png"  
+logo_path = "UBO Logo.svg"  
 
 with st.sidebar:
     if os.path.exists(logo_path):
