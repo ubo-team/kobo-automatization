@@ -10,7 +10,7 @@ st.set_page_config(page_title="Dokumentimi", layout="centered")
 # -------------------------------
 # Sidebar Logo
 # -------------------------------
-logo_path = "logo.png"  # Make sure the logo is in the root directory
+logo_path = "UBO Logo.svg"  # Make sure the logo is in the root directory
 
 with st.sidebar:
     if os.path.exists(logo_path):
