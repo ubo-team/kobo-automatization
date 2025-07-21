@@ -321,21 +321,30 @@ def process_uploaded_docx(file):
     generated_name = f"{base_name}_gjeneruar.xlsx"
     temp_xlsx_path = os.path.join(tempfile.gettempdir(), generated_name)
 
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".docx") as tmp:
-        tmp.write(file.read())
-        tmp.flush()
-        generate_xlsform(tmp.name, temp_xlsx_path)
+    try:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".docx") as tmp:
+            tmp.write(file.read())
+            tmp.flush()
+            generate_xlsform(tmp.name, temp_xlsx_path)
+        return temp_xlsx_path, generated_name, None
+    except Exception as e:
+        return None, None, str(e)
 
-    return temp_xlsx_path, generated_name
-    
+# ----------------------------
+# Main Streamlit handling
+# ----------------------------
 if uploaded_file:
     with st.spinner("Po përpunon dokumentin..."):
-        xlsx_path, generated_file_name = process_uploaded_docx(uploaded_file)
-        with open(xlsx_path, "rb") as f:
-            st.success("XLSForm u gjenerua me sukses!")
-            st.download_button(
-                label="Shkarko XLSForm-in",
-                data=f,
-                file_name=generated_file_name,
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
+        xlsx_path, generated_file_name, error = process_uploaded_docx(uploaded_file)
+
+        if error:
+            st.error("Formatimi i Word dokumentit nuk është valid.")
+        else:
+            with open(xlsx_path, "rb") as f:
+                st.success("Forma XLS u gjenerua me sukses!")
+                st.download_button(
+                    label="Shkarko formën XLS",
+                    data=f,
+                    file_name=generated_file_name,
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
