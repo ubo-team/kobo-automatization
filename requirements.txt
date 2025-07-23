@@ -5,3 +5,4 @@ Pillow
 python-docx
 openpyxl
 docx2python
+google.oauth2.service_account
