@@ -159,6 +159,12 @@ def generate_xlsform(input_docx, output_xlsx, data_method=True, selected_questio
             continue
 
         q_type, matrix_count = extract_type_and_count(line)
+        
+            # Skip if q_type is "other"
+        if q_type == "other":
+            i += 1
+            continue
+
         is_random = has_random_tag(line)
         parameters = "randomize=true" if is_random else None
 
