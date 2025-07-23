@@ -16,13 +16,13 @@ with st.sidebar:
 st.title("Gjenero XLS")
 st.markdown("Ngarko dokumentin `.docx` dhe gjenero formularin XLS për përdorim në Kobo Toolbox.")
 
+uploaded_file = st.file_uploader("Zgjidh një dokument `.docx` të formatuar:", type=["docx"])
+
 data_collection_method = st.radio(
     "Metoda e mbledhjes së të dhënave:",
     ["Face to face", "Telefon/Online"],
     index=0
 )
-
-uploaded_file = st.file_uploader("Zgjidh një dokument `.docx` të formatuar:", type=["docx"])
 
 def sanitize_name(label):
     return re.sub(r'\W+', '_', label.lower().strip())[:30]
