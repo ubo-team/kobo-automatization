@@ -93,7 +93,7 @@ def load_anketuesit_choices():
     if ids is not None and names is not None:
         for id_, name in zip(ids, names):
             if id_ and name:
-                choices.append({"name": id_.strip(), "label": name.strip()})
+                choices.append({"list_name": "anketuesit_list","name": id_.strip(), "label": name.strip()})
     else:
         st.error("Gabim: Nuk u gjetën të dhëna në kolonat E dhe F.")
 
