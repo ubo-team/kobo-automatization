@@ -16,6 +16,12 @@ with st.sidebar:
 st.title("Gjenero XLS")
 st.markdown("Ngarko dokumentin `.docx` dhe gjenero formularin XLS për përdorim në Kobo Toolbox.")
 
+data_collection_method = st.radio(
+    "Metoda e mbledhjes së të dhënave:",
+    ["Face to face", "Telefon/Online"],
+    index=0
+)
+
 uploaded_file = st.file_uploader("Zgjidh një dokument `.docx` të formatuar:", type=["docx"])
 
 def sanitize_name(label):
@@ -65,7 +71,7 @@ def clean_label_prefix(text):
 def has_random_tag(text):
     return "[random]" in text.lower()
 
-def generate_xlsform(input_docx, output_xlsx):
+def generate_xlsform(input_docx, output_xlsx, data_method=True):
     ranking_labels = [
         "Zgjedhja e parë", "Zgjedhja e dytë", "Zgjedhja e tretë",
         "Zgjedhja e katërt", "Zgjedhja e pestë", "Zgjedhja e gjashtë",
@@ -83,6 +89,7 @@ def generate_xlsform(input_docx, output_xlsx):
     choices = []
     settings = [{'style': 'theme-grid no-text-transform'}]
 
+    if data_method:
     survey.append({
         "type": "geopoint",
         "name": "GPS",
@@ -321,7 +328,7 @@ def generate_xlsform(input_docx, output_xlsx):
             pd.DataFrame(choices).to_excel(writer, sheet_name="choices", index=False)
         pd.DataFrame(settings).to_excel(writer, sheet_name="settings", index=False)
 
-def process_uploaded_docx(file):
+def process_uploaded_docx(file, data_method):
     base_name = os.path.splitext(file.name)[0]
     generated_name = f"{base_name}_gjeneruar.xlsx"
     temp_xlsx_path = os.path.join(tempfile.gettempdir(), generated_name)
@@ -330,14 +337,15 @@ def process_uploaded_docx(file):
         with tempfile.NamedTemporaryFile(delete=False, suffix=".docx") as tmp:
             tmp.write(file.read())
             tmp.flush()
-            generate_xlsform(tmp.name, temp_xlsx_path)
+            generate_xlsform(tmp.name, temp_xlsx_path, data_method)
         return temp_xlsx_path, generated_name, None
     except Exception as e:
         return None, None, str(e)
 
 if uploaded_file:
     with st.spinner("Po përpunon dokumentin..."):
-        xlsx_path, generated_file_name, error = process_uploaded_docx(uploaded_file)
+        data_method = data_collection_method == "Face to face"
+        xlsx_path, generated_file_name, error = process_uploaded_docx(uploaded_file, data_method)
 
         if error:
             st.error(f"Gabimi: {error}")
