@@ -35,7 +35,9 @@ LANGUAGE_OPTIONS_UI = {
     "Gjuha Shqipe": "sq",
     "Gjuha Angleze": "en",
     "Gjuha Serbe": "sr",
-    "Gjuha Maqedonase": "mk"
+    "Gjuha Maqedonase": "mk",
+    "Gjuha Boshnjake": "bs"
+
 }
 
 def adjust_question_code(text, from_lang, to_lang):
