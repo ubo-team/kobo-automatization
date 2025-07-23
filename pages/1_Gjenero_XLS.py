@@ -18,10 +18,9 @@ st.markdown("Ngarko dokumentin `.docx` dhe gjenero formularin XLS për përdorim
 
 uploaded_file = st.file_uploader("Zgjidh një dokument `.docx` të formatuar:", type=["docx"])
 
-data_collection_method = st.radio(
+data_collection_method = st.selectbox(
     "Metoda e mbledhjes së të dhënave:",
-    ["Face to face", "Telefon/Online"],
-    index=0
+    ["Face to face", "Telefon/Online"]
 )
 
 def sanitize_name(label):
