@@ -341,19 +341,22 @@ if uploaded_file:
     "Metoda e mbledhjes së të dhënave:",
     ["Face to face", "Telefon/Online"] 
     )
-    with st.spinner("Po përpunon dokumentin..."):
-        data_method = data_collection_method == "Face to face"
-        xlsx_path, generated_file_name, error = process_uploaded_docx(uploaded_file, data_method)
 
-        if error:
-            st.error(f"Gabimi: {error}")
+    if data_collection_method:
+        generate_button = st.button("Gjenero formularin XLS")
+        if generate_button:
+            with st.spinner("Po përpunon dokumentin..."):
+                data_method = data_collection_method == "Face to face"
+                xlsx_path, generated_file_name, error = process_uploaded_docx(uploaded_file, data_method)
 
-        else:
-            with open(xlsx_path, "rb") as f:
-                st.success("Forma XLS u gjenerua me sukses!")
-                st.download_button(
-                    label="Shkarko formën XLS",
-                    data=f,
-                    file_name=generated_file_name,
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                )
+                if error:
+                    st.error(f"Gabimi: {error}")
+                else:
+                    with open(xlsx_path, "rb") as f:
+                        st.success("Forma XLS u gjenerua me sukses!")
+                        st.download_button(
+                            label="Shkarko formën XLS",
+                            data=f,
+                            file_name=generated_file_name,
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                        )
