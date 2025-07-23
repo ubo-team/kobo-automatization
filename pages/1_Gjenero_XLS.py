@@ -99,7 +99,7 @@ def load_anketuesit_choices():
 
     return choices 
   
-def generate_xlsform(input_docx, output_xlsx, data_method=True,, selected_questions=None):
+def generate_xlsform(input_docx, output_xlsx, data_method=True, selected_questions=None):
     ranking_labels = [
         "Zgjedhja e parë", "Zgjedhja e dytë", "Zgjedhja e tretë",
         "Zgjedhja e katërt", "Zgjedhja e pestë", "Zgjedhja e gjashtë",
