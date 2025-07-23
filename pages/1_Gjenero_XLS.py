@@ -6,12 +6,9 @@ import tempfile
 import os
 from PIL import Image
 
-
 st.set_page_config(page_title="Gjenero XLS", layout="centered")
 
-
-logo_path = "logo.png"  
-
+logo_path = "logo.png"
 with st.sidebar:
     if os.path.exists(logo_path):
         st.image(Image.open(logo_path), width=150)
@@ -110,9 +107,6 @@ def generate_xlsform(input_docx, output_xlsx):
             continue
 
         q_type, matrix_count = extract_type_and_count(line)
-        #if not q_type:
-            #raise ValueError("Formatimi i Word dokumentit nuk është valid.")
-
         is_random = has_random_tag(line)
         parameters = "randomize=true" if is_random else None
 
@@ -123,7 +117,13 @@ def generate_xlsform(input_docx, output_xlsx):
             if qnum:
                 qnum = re.sub(r'\.\.+', '.', qnum).rstrip('.')
 
-            label_text = re.sub(r'\s*[|_]{2,}\s*', '', label_text)
+            # Extract hint if present
+            hint = None
+            if "[hint]" in label_text.lower():
+                parts = re.split(r'\[hint\]', label_text, flags=re.IGNORECASE)
+                label_text = parts[0].strip()
+                hint = parts[1].strip() if len(parts) > 1 else ""
+
             label = f"{qnum}. {label_text}" if qnum else full_line
 
             if qnum:
@@ -147,6 +147,8 @@ def generate_xlsform(input_docx, output_xlsx):
             def add_common_question(fields):
                 if parameters:
                     fields["parameters"] = parameters
+                if hint:
+                    fields["hint"] = hint
                 survey.append(fields)
 
             def collect_options(start_index):
@@ -188,7 +190,7 @@ def generate_xlsform(input_docx, output_xlsx):
                             "name": open_name,
                             "label": f"{clean}",
                             "relevant": relevant_expr,
-                            "required": "no"
+                            "required": "yes"
                         })
 
             elif q_type == "numeric":
@@ -288,6 +290,7 @@ def generate_xlsform(input_docx, output_xlsx):
                             "label": ranking_labels[idx - 1] if idx <= 20 else ranking_labels[-1],
                             "required": "yes",
                             "appearance": "minimal",
+                            "choice_filter": f"not(selected(${{{qname}}}, name))",
                             "constraint": constraint,
                             "constraint_message": constraint_msg if constraint else ""
                         })
@@ -303,7 +306,9 @@ def generate_xlsform(input_docx, output_xlsx):
                     for idx, opt in enumerate(options, 1):
                         clean = clean_label_prefix(opt)
                         choices.append({"list_name": list_name, "name": str(idx), "label": clean})
-
+                        
+            elif qtype is None:
+                raise ValueError("Formatimi i Word dokumentit nuk është valid.")
         else:
             i += 1
 
@@ -316,9 +321,6 @@ def generate_xlsform(input_docx, output_xlsx):
             pd.DataFrame(choices).to_excel(writer, sheet_name="choices", index=False)
         pd.DataFrame(settings).to_excel(writer, sheet_name="settings", index=False)
 
-# -------------------------------
-# Streamlit Logic
-# -------------------------------
 def process_uploaded_docx(file):
     base_name = os.path.splitext(file.name)[0]
     generated_name = f"{base_name}_gjeneruar.xlsx"
@@ -333,9 +335,6 @@ def process_uploaded_docx(file):
     except Exception as e:
         return None, None, str(e)
 
-# ----------------------------
-# Main Streamlit handling
-# ----------------------------
 if uploaded_file:
     with st.spinner("Po përpunon dokumentin..."):
         xlsx_path, generated_file_name, error = process_uploaded_docx(uploaded_file)
