@@ -90,11 +90,11 @@ def generate_xlsform(input_docx, output_xlsx, data_method=True):
     settings = [{'style': 'theme-grid no-text-transform'}]
 
     if data_method:
-    survey.append({
-        "type": "geopoint",
-        "name": "GPS",
-        "label": "GPS",
-        "required": "true"
+        survey.append({
+            "type": "geopoint",
+            "name": "GPS",
+            "label": "GPS",
+            "required": "true"
     })
 
     i = 0
