@@ -380,7 +380,7 @@ def process_uploaded_docx(file, data_method, selected_questions):
 
     try:
         with tempfile.NamedTemporaryFile(delete=False, suffix=".docx") as tmp:
-            tmp.write(file.read())
+            tmp.write(uploaded_content)
             tmp.flush()
             generate_xlsform(tmp.name, temp_xlsx_path, data_method, selected_questions)
         return temp_xlsx_path, generated_name, None
@@ -388,12 +388,15 @@ def process_uploaded_docx(file, data_method, selected_questions):
         return None, None, str(e)
 
 if uploaded_file:
+    uploaded_content = uploaded_file.read()
+    uploaded_file.seek(0)  # rifillon stream-in që të përdoret prapë
+
     data_collection_method = st.selectbox(
     "Metoda e mbledhjes së të dhënave:",
     ["Face to face", "Telefon/Online"] 
     )
 
-    doc = docx2python(uploaded_file).text
+    doc = docx2python(uploaded_content).text
     lines = [line.strip() for line in doc.split('\n') if line.strip()]
 
     # Extract question numbers (e.g., 1, D1, 2a, Q1.2 etc.)
