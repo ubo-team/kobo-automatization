@@ -115,7 +115,7 @@ def generate_xlsform(input_docx, output_xlsx):
         if q_type:
             # Extract hint if present
             hint = None
-            hint_match = re.search(r'\[hint:\s*(.*?)\]', label_text, flags=re.IGNORECASE)
+            hint_match = re.search(r'\[hint:\s*(.*?)\]', line, flags=re.IGNORECASE)
             if hint_match:
                 hint = hint_match.group(1).strip()
                 line = re.sub(r'\[hint:\s*.*?\]', '', line, flags=re.IGNORECASE)
@@ -340,7 +340,7 @@ if uploaded_file:
         xlsx_path, generated_file_name, error = process_uploaded_docx(uploaded_file)
 
         if error:
-            st.error(f"Formatimi i Word dokumentit nuk është valid. Gabimi: {error}")
+            st.error(f"Gabimi: {error}")
 
         else:
             with open(xlsx_path, "rb") as f:
