@@ -1,6 +1,7 @@
 streamlit
-docx2python
 pandas
 requests
 Pillow
+python-docx
 openpyxl
+docx2python
