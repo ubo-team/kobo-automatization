@@ -145,9 +145,6 @@ def generate_xlsform(input_docx, output_xlsx, data_method=True, selected_questio
     note_index = 1
 
     while i < len(lines):
-        if selected_questions is not None and label_text not in selected_questions:
-            i += 1
-            continue
         line = lines[i]
 
         if line.lower().startswith("[note]"):
@@ -175,6 +172,10 @@ def generate_xlsform(input_docx, output_xlsx, data_method=True, selected_questio
             
             full_line = strip_type(line)
             qnum, label_text = extract_question_number_and_text(full_line)
+
+            if selected_questions is not None and label_text not in selected_questions:
+                i += 1
+                continue
 
             if qnum:
                 qnum = re.sub(r'\.\.+', '.', qnum).rstrip('.')
