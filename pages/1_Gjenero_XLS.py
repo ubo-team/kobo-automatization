@@ -51,6 +51,8 @@ def extract_question_number_and_text(line):
     if match:
         number = match.group(1)
         text = match.group(2)
+        text = re.sub(r'[\|/_]+', '', text).strip()
+        text = re.sub(r'\s{2,}', ' ', text).strip()
         return number, text
     return None, line
 
