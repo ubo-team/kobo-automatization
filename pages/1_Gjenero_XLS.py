@@ -18,11 +18,6 @@ st.markdown("Ngarko dokumentin `.docx` dhe gjenero formularin XLS për përdorim
 
 uploaded_file = st.file_uploader("Zgjidh një dokument `.docx` të formatuar:", type=["docx"])
 
-data_collection_method = st.selectbox(
-    "Metoda e mbledhjes së të dhënave:",
-    ["Face to face", "Telefon/Online"]
-)
-
 def sanitize_name(label):
     return re.sub(r'\W+', '_', label.lower().strip())[:30]
 
@@ -342,6 +337,10 @@ def process_uploaded_docx(file, data_method):
         return None, None, str(e)
 
 if uploaded_file:
+    data_collection_method = st.selectbox(
+    "Metoda e mbledhjes së të dhënave:",
+    ["Face to face", "Telefon/Online"] 
+    )
     with st.spinner("Po përpunon dokumentin..."):
         data_method = data_collection_method == "Face to face"
         xlsx_path, generated_file_name, error = process_uploaded_docx(uploaded_file, data_method)
