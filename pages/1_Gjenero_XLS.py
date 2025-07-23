@@ -89,6 +89,10 @@ def load_anketuesit_choices():
     ids = sheet.col_values(6)[2:]    # Kolona F
 
     choices = [{"name": id_, "label": name} for id_, name in zip(ids, names)]
+
+    # Printo për debug në Streamlit (mund të fshihen më vonë)
+    st.write("Choices e ngarkuara nga Google Sheet:")
+    st.json(choices)
     
 def generate_xlsform(input_docx, output_xlsx, data_method=True):
     ranking_labels = [
