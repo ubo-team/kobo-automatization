@@ -85,8 +85,8 @@ def load_anketuesit_choices():
     # Hap dokumentin dhe worksheet-in
     sheet = gc.open("Sistemi i mbledhjes te te dhenave / Janar - Dhjetor 2025").worksheet("lists")
 
-    ids = sheet.col_values(5)[2:]    # Kolona E
-    names = sheet.col_values(6)[2:]  # Kolona F
+    ids = sheet.col_values(5)[3:]    # Kolona E
+    names = sheet.col_values(6)[3:]  # Kolona F
 
     # Mbaj vetëm rreshtat që kanë të dyja vlerat jo bosh
     choices = []
