@@ -88,10 +88,14 @@ def load_anketuesit_choices():
     ids = sheet.col_values(5)[2:]    # Kolona E
     names = sheet.col_values(6)[2:]  # Kolona F
 
+    # Mbaj vetëm rreshtat që kanë të dyja vlerat jo bosh
     choices = []
-    for id_, name in zip(ids, names):
-        if id_.strip() and name.strip():  # include only non-empty values
-            choices.append({"name": id_.strip(), "label": name.strip()})
+    if ids is not None and names is not None:
+        for id_, name in zip(ids, names):
+            if id_ and name:
+                choices.append({"name": id_.strip(), "label": name.strip()})
+    else:
+        st.error("Gabim: Nuk u gjetën të dhëna në kolonat E dhe F.")
 
     # Shfaq për kontroll
     st.json(choices)
