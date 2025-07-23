@@ -84,19 +84,12 @@ def load_anketuesit_choices():
     
     # Hap dokumentin dhe worksheet-in
     sheet = gc.open("Sistemi i mbledhjes te te dhenave / Janar - Dhjetor 2025").worksheet("lists")
+
+    names = sheet.col_values(5)[2:]  # Kolona E
+    ids = sheet.col_values(6)[2:]    # Kolona F
+
+    choices = [{"name": id_, "label": name} for id_, name in zip(ids, names)]
     
-    # Merr të dhënat
-    records = sheet.get_all_records()
-
-    choices = []
-    for row in records:
-        choices.append({
-            "list_name": "anketuesit_list",
-            "name": str(row["No."]),        # ose çfarëdo emër kolone që përdor
-            "label": str(row["Enumerator"])      # ose "Emri Mbiemri"
-        })
-    return choices
-
 def generate_xlsform(input_docx, output_xlsx, data_method=True):
     ranking_labels = [
         "Zgjedhja e parë", "Zgjedhja e dytë", "Zgjedhja e tretë",
