@@ -390,7 +390,7 @@ def process_uploaded_docx(file, data_method, selected_questions):
 
 if uploaded_file:
     uploaded_content = uploaded_file.read()
-    uploaded_bytesio = BytesIO(uploaded_content
+    uploaded_bytesio = BytesIO(uploaded_content)
     uploaded_bytesio.seek(0)  # rifillon stream-in që të përdoret prapë
 
     data_collection_method = st.selectbox(
