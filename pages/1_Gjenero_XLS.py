@@ -85,15 +85,14 @@ def load_anketuesit_choices():
     # Hap dokumentin dhe worksheet-in
     sheet = gc.open("Sistemi i mbledhjes te te dhenave / Janar - Dhjetor 2025").worksheet("lists")
 
-    names = sheet.col_values(5)[2:]  # Kolona E
-    ids = sheet.col_values(6)[2:]    # Kolona F
+    ids = sheet.col_values(5)[2:]    # Kolona E
+    names = sheet.col_values(6)[2:]  # Kolona F
 
-    choices = [{"name": id_, "label": name} for id_, name in zip(ids, names)]
-
-    # Printo për debug në Streamlit (mund të fshihen më vonë)
-    st.write("Choices e ngarkuara nga Google Sheet:")
-    st.json(choices)
-    
+    choices = []
+    for id_, name in zip(ids, names):
+        if id_.strip() and name.strip():  # include only non-empty values
+            choices.append({"name": id_.strip(), "label": name.strip()})
+  
 def generate_xlsform(input_docx, output_xlsx, data_method=True):
     ranking_labels = [
         "Zgjedhja e parë", "Zgjedhja e dytë", "Zgjedhja e tretë",
