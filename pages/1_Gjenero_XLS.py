@@ -92,6 +92,9 @@ def load_anketuesit_choices():
     for id_, name in zip(ids, names):
         if id_.strip() and name.strip():  # include only non-empty values
             choices.append({"name": id_.strip(), "label": name.strip()})
+
+    # Shfaq për kontroll
+    st.json(choices)
   
 def generate_xlsform(input_docx, output_xlsx, data_method=True):
     ranking_labels = [
