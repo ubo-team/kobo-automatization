@@ -348,15 +348,20 @@ if uploaded_file:
             with st.spinner("Po përpunon dokumentin..."):
                 data_method = data_collection_method == "Face to face"
                 xlsx_path, generated_file_name, error = process_uploaded_docx(uploaded_file, data_method)
-
+        
                 if error:
                     st.error(f"Gabimi: {error}")
                 else:
                     with open(xlsx_path, "rb") as f:
-                        st.success("Forma XLS u gjenerua me sukses!")
-                        st.download_button(
-                            label="Shkarko formën XLS",
-                            data=f,
-                            file_name=generated_file_name,
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                        )
+                        st.session_state["xlsx_data"] = f.read()
+                        st.session_state["xlsx_name"] = generated_file_name
+                        st.session_state["xlsx_ready"] = True
+        if st.session_state.get("xlsx_ready", False):
+            st.success("Forma XLS u gjenerua me sukses!")
+            st.download_button(
+                label="Shkarko formën XLS",
+                data=st.session_state["xlsx_data"],
+                file_name=st.session_state["xlsx_name"],
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+
