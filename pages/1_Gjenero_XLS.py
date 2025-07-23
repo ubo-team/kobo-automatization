@@ -68,15 +68,24 @@ def has_random_tag(text):
     return "[random]" in text.lower()
 
 def load_anketuesit_choices():
-    creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"])
-    client = gspread.authorize(creds)
-    sheet = client.open("lists").sheet1
+    scopes = ["https://www.googleapis.com/auth/spreadsheets.readonly"]
+    creds = Credentials.from_service_account_info(
+        st.secrets["gcp_service_account"], scopes=scopes
+    )
+    gc = gspread.authorize(creds)
+    
+    # Zëvendëso me emrin e saktë të Google Sheet-it tënd
+    sheet = gc.open("Sistemi i mbledhjes te te dhenave / Janar - Dhjetor 2025")..worksheet("lists")
     records = sheet.get_all_records()
-    return [{
-        "list_name": "anketuesit_list",
-        "name": str(row["No."]).strip(),
-        "label": str(row["Enumerator"]).strip()
-    } for row in records]
+
+    choices = []
+    for row in records:
+        choices.append({
+            "list_name": "anketuesit_list",
+            "name": str(row["No."]),        # ose çfarëdo emër kolone që përdor
+            "label": str(row["Enumerator"])      # ose "Emri Mbiemri"
+        })
+    return choices
 
 def generate_xlsform(input_docx, output_xlsx, data_method=True):
     ranking_labels = [
