@@ -374,12 +374,13 @@ def generate_xlsform(input_docx, output_xlsx, data_method=True, selected_questio
             pd.DataFrame(choices).to_excel(writer, sheet_name="choices", index=False)
         pd.DataFrame(settings).to_excel(writer, sheet_name="settings", index=False)
 
-def process_uploaded_docx(file, data_method, selected_questions):
-    base_name = os.path.splitext(file.name)[0]
+def process_uploaded_docx(uploaded_bytesio, filename, data_method, selected_questions):
+    base_name = os.path.splitext(filename)[0]
     generated_name = f"{base_name}_gjeneruar.xlsx"
     temp_xlsx_path = os.path.join(tempfile.gettempdir(), generated_name)
 
     try:
+        uploaded_bytesio.seek(0)
         with tempfile.NamedTemporaryFile(delete=False, suffix=".docx") as tmp:
             tmp.write(uploaded_bytesio.read())
             tmp.flush()
@@ -424,7 +425,8 @@ if uploaded_file:
         if generate_button:
             with st.spinner("Po përpunon dokumentin..."):
                 data_method = data_collection_method == "Face to face"
-                xlsx_path, generated_file_name, error = process_uploaded_docx(uploaded_file, data_method, st.session_state.get("selected_questions", None))
+                uploaded_bytesio.seek(0)
+                xlsx_path, generated_file_name, error = process_uploaded_docx(uploaded_bytesio, uploaded_file.name, data_method, st.session_state.get("selected_questions", None))
         
                 if error:
                     st.error(f"Gabimi: {error}")
