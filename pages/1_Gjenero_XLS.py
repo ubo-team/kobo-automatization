@@ -118,7 +118,6 @@ def generate_xlsform(input_docx, output_xlsx):
             hint_match = re.search(r'\[hint:\s*(.*?)\]', label_text, flags=re.IGNORECASE)
             if hint_match:
                 hint = hint_match.group(1).strip()
-                label_text = re.sub(r'\[hint:\s*.*?\]', '', label_text, flags=re.IGNORECASE).strip()
             
             full_line = strip_type(line)
             qnum, label_text = extract_question_number_and_text(full_line)
