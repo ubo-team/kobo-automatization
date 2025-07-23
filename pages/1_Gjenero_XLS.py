@@ -443,9 +443,9 @@ if uploaded_file:
                         st.session_state["xlsx_name"] = generated_file_name
                         st.session_state["xlsx_ready"] = True
         if st.session_state.get("xlsx_ready", False):
-            st.success("Forma XLS u gjenerua me sukses!")
+            st.success("Formulari XLS u gjenerua me sukses!")
             st.download_button(
-                label="Shkarko formën XLS",
+                label="Shkarko formularin XLS",
                 data=st.session_state["xlsx_data"],
                 file_name=st.session_state["xlsx_name"],
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
