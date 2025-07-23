@@ -75,7 +75,7 @@ def load_anketuesit_choices():
     gc = gspread.authorize(creds)
     
     # Zëvendëso me emrin e saktë të Google Sheet-it tënd
-    sheet = gc.open("Sistemi i mbledhjes te te dhenave / Janar - Dhjetor 2025")..worksheet("lists")
+    sheet = gc.open("Sistemi i mbledhjes te te dhenave / Janar - Dhjetor 2025").worksheet("lists")
     records = sheet.get_all_records()
 
     choices = []
