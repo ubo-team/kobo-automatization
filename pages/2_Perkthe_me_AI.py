@@ -6,7 +6,7 @@ import re
 from PIL import Image
 import os
 
-st.set_page_config(page_title="Përkthe me AI", layout="centered")
+st.set_page_config(page_title="Perkthim Excel Files A", layout="centered")
 
 
 logo_path = "logo.png"  
