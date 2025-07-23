@@ -68,14 +68,22 @@ def has_random_tag(text):
     return "[random]" in text.lower()
 
 def load_anketuesit_choices():
-    scopes = ["https://www.googleapis.com/auth/spreadsheets.readonly"]
-    creds = Credentials.from_service_account_info(
-        st.secrets["gcp_service_account"], scopes=scopes
-    )
-    gc = gspread.authorize(creds)
+    # Merr kredencialet nga st.secrets
+    gcp_info = st.secrets["gcp_service_account"]
     
-    # Zëvendëso me emrin e saktë të Google Sheet-it tënd
+    # Deklaro scope të qartë për Google Sheets
+    scopes = ["https://www.googleapis.com/auth/spreadsheets.readonly"]
+    
+    # Krijo kredencialet me scope
+    credentials = Credentials.from_service_account_info(gcp_info, scopes=scopes)
+    
+    # Autorizo me gspread
+    gc = gspread.authorize(credentials)
+    
+    # Hap dokumentin dhe worksheet-in
     sheet = gc.open("Sistemi i mbledhjes te te dhenave / Janar - Dhjetor 2025").worksheet("lists")
+    
+    # Merr të dhënat
     records = sheet.get_all_records()
 
     choices = []
