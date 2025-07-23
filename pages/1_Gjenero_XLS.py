@@ -99,7 +99,7 @@ def load_anketuesit_choices():
 
     return choices 
   
-def generate_xlsform(input_docx, output_xlsx, data_method=True):
+def generate_xlsform(input_docx, output_xlsx, data_method=True,, selected_questions=None):
     ranking_labels = [
         "Zgjedhja e parë", "Zgjedhja e dytë", "Zgjedhja e tretë",
         "Zgjedhja e katërt", "Zgjedhja e pestë", "Zgjedhja e gjashtë",
@@ -144,6 +144,9 @@ def generate_xlsform(input_docx, output_xlsx, data_method=True):
     note_index = 1
 
     while i < len(lines):
+        if selected_questions is not None and label_text not in selected_questions:
+            i += 1
+            continue
         line = lines[i]
 
         if line.lower().startswith("[note]"):
@@ -370,7 +373,7 @@ def generate_xlsform(input_docx, output_xlsx, data_method=True):
             pd.DataFrame(choices).to_excel(writer, sheet_name="choices", index=False)
         pd.DataFrame(settings).to_excel(writer, sheet_name="settings", index=False)
 
-def process_uploaded_docx(file, data_method):
+def process_uploaded_docx(file, data_method, selected_questions):
     base_name = os.path.splitext(file.name)[0]
     generated_name = f"{base_name}_gjeneruar.xlsx"
     temp_xlsx_path = os.path.join(tempfile.gettempdir(), generated_name)
@@ -379,7 +382,7 @@ def process_uploaded_docx(file, data_method):
         with tempfile.NamedTemporaryFile(delete=False, suffix=".docx") as tmp:
             tmp.write(file.read())
             tmp.flush()
-            generate_xlsform(tmp.name, temp_xlsx_path, data_method)
+            generate_xlsform(tmp.name, temp_xlsx_path, data_method, selected_questions)
         return temp_xlsx_path, generated_name, None
     except Exception as e:
         return None, None, str(e)
@@ -390,12 +393,33 @@ if uploaded_file:
     ["Face to face", "Telefon/Online"] 
     )
 
+    doc = docx2python(uploaded_file).text
+    lines = [line.strip() for line in doc.split('\n') if line.strip()]
+
+    # Extract question numbers (e.g., 1, D1, 2a, Q1.2 etc.)
+    question_options = []
+    for line in lines:
+        q_type, _ = extract_type_and_count(line)
+        if q_type:
+            _, label_text = extract_question_number_and_text(strip_type(line))
+            if label_text:
+                question_options.append(label_text)
+
+    st.session_state["question_lines"] = lines
+    selected_questions = st.multiselect(
+        "Zgjidh pyetjet që dëshiron të kodosh:",
+        options=question_options,
+        default=question_options
+    )
+    st.session_state["selected_questions"] = selected_questions
+
+
     if data_collection_method:
         generate_button = st.button("Gjenero formularin XLS")
         if generate_button:
             with st.spinner("Po përpunon dokumentin..."):
                 data_method = data_collection_method == "Face to face"
-                xlsx_path, generated_file_name, error = process_uploaded_docx(uploaded_file, data_method)
+                xlsx_path, generated_file_name, error = process_uploaded_docx(uploaded_file, data_method, st.session_state.get("selected_questions", None))
         
                 if error:
                     st.error(f"Gabimi: {error}")
