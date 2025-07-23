@@ -5,6 +5,8 @@ import re
 import tempfile
 import os
 from PIL import Image
+from google.oauth2.service_account import Credentials
+import gspread
 
 st.set_page_config(page_title="Gjenero XLS", layout="centered")
 
@@ -65,6 +67,17 @@ def clean_label_prefix(text):
 def has_random_tag(text):
     return "[random]" in text.lower()
 
+def load_anketuesit_choices():
+    creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"])
+    client = gspread.authorize(creds)
+    sheet = client.open("lists").sheet1
+    records = sheet.get_all_records()
+    return [{
+        "list_name": "anketuesit_list",
+        "name": str(row["No."]).strip(),
+        "label": str(row["Enumerator"]).strip()
+    } for row in records]
+
 def generate_xlsform(input_docx, output_xlsx, data_method=True):
     ranking_labels = [
         "Zgjedhja e parë", "Zgjedhja e dytë", "Zgjedhja e tretë",
@@ -89,8 +102,22 @@ def generate_xlsform(input_docx, output_xlsx, data_method=True):
             "name": "GPS",
             "label": "GPS",
             "required": "true"
-    })
-
+    }
+            # Add Anketuesi_ja question
+        survey.append({
+            "type": "select_one anketuesit_list",
+            "name": "Anketuesi_ja",
+            "label": "Anketuesi/ja",
+            "required": "true",
+            "appearance": "search"
+        })
+        
+        # Add the dynamic choices
+        try:
+            anketuesit_choices = load_anketuesit_choices()
+            choices.extend(anketuesit_choices)
+        except Exception as e:
+            raise RuntimeError(f"Gabim gjatë ngarkimit të listës së anketuesve: {e}")
     i = 0
     q_index = 1
     note_index = 1
