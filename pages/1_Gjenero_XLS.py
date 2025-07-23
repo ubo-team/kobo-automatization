@@ -102,7 +102,7 @@ def generate_xlsform(input_docx, output_xlsx, data_method=True):
             "name": "GPS",
             "label": "GPS",
             "required": "true"
-    }
+    })
             # Add Anketuesi_ja question
         survey.append({
             "type": "select_one anketuesit_list",
