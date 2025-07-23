@@ -290,9 +290,7 @@ def generate_xlsform(input_docx, output_xlsx):
                             "label": ranking_labels[idx - 1] if idx <= 20 else ranking_labels[-1],
                             "required": "yes",
                             "appearance": "minimal",
-                            "choice_filter": f"not(selected(${{{qname}}}, name))",
-                            "constraint": constraint,
-                            "constraint_message": constraint_msg if constraint else ""
+                            "choice_filter": " and ".join([f"not(selected(${{{qname}_{j}}}, name))" for j in range(1, idx)])
                         })
 
                     survey.append({"type": "end_group", "name": f"{qname}_group_end"})
