@@ -122,6 +122,8 @@ def generate_xlsform(input_docx, output_xlsx):
             if "[hint]" in label_text.lower():
                 parts = re.split(r'\[hint\]', label_text, flags=re.IGNORECASE)
                 label_text = parts[0].strip()
+                label_text = re.sub(r'[\|/_]+', '', label_text).strip()
+                label_text = re.sub(r'\s{2,}', ' ', label_text).strip()
                 hint = parts[1].strip() if len(parts) > 1 else ""
 
             label = f"{qnum}. {label_text}" if qnum else full_line
@@ -305,8 +307,8 @@ def generate_xlsform(input_docx, output_xlsx):
                         clean = clean_label_prefix(opt)
                         choices.append({"list_name": list_name, "name": str(idx), "label": clean})
                         
-            elif qtype is None:
-                raise ValueError("Formatimi i Word dokumentit nuk është valid.")
+            elif q_type is None:
+                raise ValueError(f"Formatimi i Word dokumentit nuk është valid në këtë linjë: '{line}'")
         else:
             i += 1
 
