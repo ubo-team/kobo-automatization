@@ -179,7 +179,7 @@ def generate_xlsform(input_docx, output_xlsx, data_method=True, selected_questio
             full_line = strip_type(line)
             qnum, label_text = extract_question_number_and_text(full_line)
 
-            if selected_questions is not None and label_text not in selected_questions:
+            if selected_questions is not None and label_text in selected_questions:
                 i += 1
                 continue
 
@@ -420,9 +420,9 @@ if uploaded_file:
 
     st.session_state["question_lines"] = lines
     selected_questions = st.multiselect(
-        "Zgjidh pyetjet që dëshiron të kodosh:",
+        "Zgjidh pyetjet që NUK dëshiron të kodosh:",
         options=question_options,
-        default=question_options
+        default=None
     )
     st.session_state["selected_questions"] = selected_questions
 
