@@ -97,8 +97,7 @@ def load_anketuesit_choices():
     else:
         st.error("Gabim: Nuk u gjetën të dhëna në kolonat E dhe F.")
 
-    # Shfaq për kontroll
-    st.json(choices)
+    return choices 
   
 def generate_xlsform(input_docx, output_xlsx, data_method=True):
     ranking_labels = [
