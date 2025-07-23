@@ -7,6 +7,7 @@ import os
 from PIL import Image
 from google.oauth2.service_account import Credentials
 import gspread
+from io import BytesIO
 
 st.set_page_config(page_title="Gjenero XLS", layout="centered")
 
@@ -380,7 +381,7 @@ def process_uploaded_docx(file, data_method, selected_questions):
 
     try:
         with tempfile.NamedTemporaryFile(delete=False, suffix=".docx") as tmp:
-            tmp.write(uploaded_content)
+            tmp.write(uploaded_bytesio.read())
             tmp.flush()
             generate_xlsform(tmp.name, temp_xlsx_path, data_method, selected_questions)
         return temp_xlsx_path, generated_name, None
@@ -389,14 +390,15 @@ def process_uploaded_docx(file, data_method, selected_questions):
 
 if uploaded_file:
     uploaded_content = uploaded_file.read()
-    uploaded_file.seek(0)  # rifillon stream-in që të përdoret prapë
+    uploaded_bytesio = BytesIO(uploaded_content
+    uploaded_bytesio.seek(0)  # rifillon stream-in që të përdoret prapë
 
     data_collection_method = st.selectbox(
     "Metoda e mbledhjes së të dhënave:",
     ["Face to face", "Telefon/Online"] 
     )
 
-    doc = docx2python(uploaded_content).text
+    doc = docx2python(uploaded_bytesio).text
     lines = [line.strip() for line in doc.split('\n') if line.strip()]
 
     # Extract question numbers (e.g., 1, D1, 2a, Q1.2 etc.)
