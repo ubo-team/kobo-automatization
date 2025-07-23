@@ -340,7 +340,8 @@ if uploaded_file:
         xlsx_path, generated_file_name, error = process_uploaded_docx(uploaded_file)
 
         if error:
-            st.error("Formatimi i Word dokumentit nuk është valid. Shiko dokumentin.")
+            st.error(f"Formatimi i Word dokumentit nuk është valid. Gabimi: {error}")
+
         else:
             with open(xlsx_path, "rb") as f:
                 st.success("Forma XLS u gjenerua me sukses!")
