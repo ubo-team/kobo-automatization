@@ -72,7 +72,9 @@ def load_anketuesit_choices():
     gcp_info = st.secrets["gcp_service_account"]
     
     # Deklaro scope të qartë për Google Sheets
-    scopes = ["https://www.googleapis.com/auth/spreadsheets.readonly"]
+    scopes = [
+    "https://www.googleapis.com/auth/spreadsheets",
+    "https://www.googleapis.com/auth/drive"]
     
     # Krijo kredencialet me scope
     credentials = Credentials.from_service_account_info(gcp_info, scopes=scopes)
