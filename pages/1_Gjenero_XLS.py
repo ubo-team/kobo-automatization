@@ -113,18 +113,18 @@ def generate_xlsform(input_docx, output_xlsx):
         parameters = "randomize=true" if is_random else None
 
         if q_type:
-            full_line = strip_type(line)
-            qnum, label_text = extract_question_number_and_text(full_line)
-
-            if qnum:
-                qnum = re.sub(r'\.\.+', '.', qnum).rstrip('.')
-
             # Extract hint if present
             hint = None
             hint_match = re.search(r'\[hint:\s*(.*?)\]', label_text, flags=re.IGNORECASE)
             if hint_match:
                 hint = hint_match.group(1).strip()
                 label_text = re.sub(r'\[hint:\s*.*?\]', '', label_text, flags=re.IGNORECASE).strip()
+            
+            full_line = strip_type(line)
+            qnum, label_text = extract_question_number_and_text(full_line)
+
+            if qnum:
+                qnum = re.sub(r'\.\.+', '.', qnum).rstrip('.')
 
             label = f"{qnum}. {label_text}" if qnum else full_line
 
