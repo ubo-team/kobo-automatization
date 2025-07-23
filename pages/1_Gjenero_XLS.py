@@ -51,7 +51,7 @@ def extract_question_number_and_text(line):
     if match:
         number = match.group(1)
         text = match.group(2)
-        text = re.sub(r'[\|/_]+', '', text).strip()
+        text = re.sub(r'[\|_]+', '', text).strip()
         text = re.sub(r'\s{2,}', ' ', text).strip()
         return number, text
     return None, line
@@ -121,12 +121,10 @@ def generate_xlsform(input_docx, output_xlsx):
 
             # Extract hint if present
             hint = None
-            if "[hint]" in label_text.lower():
-                parts = re.split(r'\[hint\]', label_text, flags=re.IGNORECASE)
-                label_text = parts[0].strip()
-                label_text = re.sub(r'[\|/_]+', '', label_text).strip()
-                label_text = re.sub(r'\s{2,}', ' ', label_text).strip()
-                hint = parts[1].strip() if len(parts) > 1 else ""
+            hint_match = re.search(r'\[hint:\s*(.*?)\]', label_text, flags=re.IGNORECASE)
+            if hint_match:
+                hint = hint_match.group(1).strip()
+                label_text = re.sub(r'\[hint:\s*.*?\]', '', label_text, flags=re.IGNORECASE).strip()
 
             label = f"{qnum}. {label_text}" if qnum else full_line
 
