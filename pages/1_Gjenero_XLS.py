@@ -44,7 +44,22 @@ def extract_type_and_count(text):
         }
 
     generic_match = re.search(r'\[(.*?)\]', text)
-    return (generic_match.group(1).lower(), None) if generic_match else (None, None)
+    if generic_match:
+        raw_type = generic_match.group(1).lower()
+        valid_types = [
+            "single", "multiple", "text", "string", "numeric", "matrix single", "matrix multiple",
+            "ranking", "note", "random"
+        ]
+        if raw_type.startswith("scale") or raw_type.startswith("ranking") or raw_type.startswith("matrix"):
+            return raw_type, None
+        elif raw_type in valid_types:
+            return raw_type, None
+        elif raw_type.startswith("hint:"):
+            return None, None  # let hint be handled separately
+        else:
+            raise ValueError(f"Tipi i pyetjes nuk njihet: [{raw_type}]")
+    else:
+        return None, None
 
 def strip_type(text):
     return re.sub(r'\s*\[.*?\]\s*', '', text).strip()
