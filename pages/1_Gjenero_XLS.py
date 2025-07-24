@@ -48,7 +48,7 @@ def extract_type_and_count(text):
         raw_type = generic_match.group(1).lower()
         valid_types = [
             "single", "multiple", "text", "string", "numeric", "matrix single", "matrix multiple",
-            "ranking", "note", "random"
+            "ranking", "note", "random", "other"
         ]
         if raw_type.startswith("scale") or raw_type.startswith("ranking") or raw_type.startswith("matrix"):
             return raw_type, None
