@@ -471,6 +471,7 @@ if uploaded_file:
                         st.session_state["xlsx_data"] = f.read()
                         st.session_state["xlsx_name"] = generated_file_name
                         st.session_state["xlsx_ready"] = True
+                        st.session_state["skipped_other_questions"] = skipped
         if st.session_state.get("xlsx_ready", False):
             st.success("Formulari XLS u gjenerua me sukses!")
             st.download_button(
