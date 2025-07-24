@@ -435,7 +435,7 @@ if uploaded_file:
                 if label_text:
                     question_options.append(label_text)
         except ValueError as e:
-            st.error(f"Gabim në linjën: **{line}**\n\n{str(e)}")
+            st.error(f"Gabim në rreshtin: **{line}**\n\n{str(e)}")
             st.stop()
 
     st.session_state["question_lines"] = lines
