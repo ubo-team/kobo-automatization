@@ -403,7 +403,7 @@ def generate_xlsform(input_docx, output_xlsx, data_method=True, selected_questio
             pd.DataFrame(choices).to_excel(writer, sheet_name="choices", index=False)
         pd.DataFrame(settings).to_excel(writer, sheet_name="settings", index=False)
 
-return skipped_other_questions
+    return skipped_other_questions
 
 
 def process_uploaded_docx(uploaded_bytesio, filename, data_method, selected_questions):
