@@ -131,6 +131,7 @@ def generate_xlsform(input_docx, output_xlsx, data_method=True, selected_questio
 
     survey = []
     choices = []
+    skipped_other_questions = []
     settings = [{'style': 'theme-grid no-text-transform'}]
 
     if data_method:
@@ -178,6 +179,11 @@ def generate_xlsform(input_docx, output_xlsx, data_method=True, selected_questio
         
             # Skip if q_type is "other"
         if q_type == "other":
+            # Collect label for display
+            full_line = strip_type(line)
+            _, label_text = extract_question_number_and_text(full_line)
+            if label_text:
+                skipped_other_questions.append(label_text)
             i += 1
             continue
 
@@ -397,6 +403,9 @@ def generate_xlsform(input_docx, output_xlsx, data_method=True, selected_questio
             pd.DataFrame(choices).to_excel(writer, sheet_name="choices", index=False)
         pd.DataFrame(settings).to_excel(writer, sheet_name="settings", index=False)
 
+return skipped_other_questions
+
+
 def process_uploaded_docx(uploaded_bytesio, filename, data_method, selected_questions):
     base_name = os.path.splitext(filename)[0]
     generated_name = f"{base_name}_gjeneruar.xlsx"
@@ -407,10 +416,10 @@ def process_uploaded_docx(uploaded_bytesio, filename, data_method, selected_ques
         with tempfile.NamedTemporaryFile(delete=False, suffix=".docx") as tmp:
             tmp.write(uploaded_bytesio.read())
             tmp.flush()
-            generate_xlsform(tmp.name, temp_xlsx_path, data_method, selected_questions)
-        return temp_xlsx_path, generated_name, None
+            skipped = generate_xlsform(tmp.name, temp_xlsx_path, data_method, selected_questions)
+        return temp_xlsx_path, generated_name, None, skipped
     except Exception as e:
-        return None, None, str(e)
+        return None, None, str(e), None
 
 if uploaded_file:
     uploaded_content = uploaded_file.read()
@@ -453,7 +462,7 @@ if uploaded_file:
             with st.spinner("Po përpunon dokumentin..."):
                 data_method = data_collection_method == "Face to face"
                 uploaded_bytesio.seek(0)
-                xlsx_path, generated_file_name, error = process_uploaded_docx(uploaded_bytesio, uploaded_file.name, data_method, st.session_state.get("selected_questions", None))
+                xlsx_path, generated_file_name, error, skipped = process_uploaded_docx(uploaded_bytesio, uploaded_file.name, data_method, st.session_state.get("selected_questions", None))
         
                 if error:
                     st.error(f"Gabimi: {error}")
@@ -470,4 +479,8 @@ if uploaded_file:
                 file_name=st.session_state["xlsx_name"],
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
+            if st.session_state.get("skipped_other_questions"):
+                st.info("Pyetjet me tag-un [other] që u anashkaluan:")
+                for q in st.session_state["skipped_other_questions"]:
+                    st.markdown(f"- {q}")
 
