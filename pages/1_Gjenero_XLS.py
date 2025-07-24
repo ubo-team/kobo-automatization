@@ -428,11 +428,15 @@ if uploaded_file:
     # Extract question numbers (e.g., 1, D1, 2a, Q1.2 etc.)
     question_options = []
     for line in lines:
-        q_type, _ = extract_type_and_count(line)
-        if q_type:
-            _, label_text = extract_question_number_and_text(strip_type(line))
-            if label_text:
-                question_options.append(label_text)
+        try:
+            q_type, _ = extract_type_and_count(line)
+            if q_type:
+                _, label_text = extract_question_number_and_text(strip_type(line))
+                if label_text:
+                    question_options.append(label_text)
+        except ValueError as e:
+            st.error(f"Gabim në linjën: **{line}**\n\n{str(e)}")
+            st.stop()
 
     st.session_state["question_lines"] = lines
     selected_questions = st.multiselect(
