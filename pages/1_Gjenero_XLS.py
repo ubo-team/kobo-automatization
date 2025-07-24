@@ -125,21 +125,22 @@ def generate_xlsform(input_docx, output_xlsx, data_method=True, selected_questio
             "label": "GPS",
             "required": "true"
     })
-            # Add Anketuesi_ja question
-        survey.append({
-            "type": "select_one anketuesit_list",
-            "name": "Anketuesi_ja",
-            "label": "Anketuesi/ja",
-            "required": "true",
-            "appearance": "search"
-        })
+           
+    # Add Anketuesi_ja question
+    survey.append({
+       "type": "select_one anketuesit_list",
+        "name": "Anketuesi_ja",
+        "label": "Anketuesi/ja",
+        "required": "true",
+        "appearance": "search"
+    })
+     # Add the dynamic choices
+    try:
+        anketuesit_choices = load_anketuesit_choices()
+        choices.extend(anketuesit_choices)
+    except Exception as e:
+        raise RuntimeError(f"Gabim gjatë ngarkimit të listës së anketuesve: {e}")
         
-        # Add the dynamic choices
-        try:
-            anketuesit_choices = load_anketuesit_choices()
-            choices.extend(anketuesit_choices)
-        except Exception as e:
-            raise RuntimeError(f"Gabim gjatë ngarkimit të listës së anketuesve: {e}")
     i = 0
     q_index = 1
     note_index = 1
