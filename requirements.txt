@@ -7,3 +7,5 @@ openpyxl
 docx2python
 google-auth
 gspread
+regex
+difflib
