@@ -182,11 +182,29 @@ elif mode == "Ngarko XLSForm":
             likert_pairs = [
                 ("1-Aspak i kënaqur", "1-Uopšte nisam zadovoljan/na", "1-Not at all satisfied"),
                 ("5-Plotësisht i kënaqur", "5-Potpuno zadovoljan/zadovoljna", "5-Completely satisfied"),
+
                 ("1-Aspak nuk pajtohem", "1-Uopšte se ne slažem", "1-Strongly disagree"),
                 ("5-Plotësisht pajtohem", "5-Potpuno se slažem", "5-Strongly agree"),
+
+                ("1– Aspak efektive", "1 – Uopšte efektivno", "1-Not effective at all"),
+                ("5– Plotësisht efektive", "5 – Potpuno efektivno", "5-Completely effective"),
+
+                ("1-Aspak e sigurtë", "1-Uopšte nije bezbedno", "1-Not safe at all"),
+                ("5-Plotësisht e sigurtë", "5-Potpuno je bezbedno", "5-Completely safe"),
+
+                ("1-Aspak meritore", "1-Nimalo zaslužne", "1-Not deserving at all"),
+                ("5-Plotësisht meritore", "5-Potpuno zaslužne", "5-Completely deserving"),
+
+                ("Shumë negative", "Veoma negativno", "Very negative"),
+                ("Shumë pozitive", "Veoma pozitivno", "Very positive"),
+
+                ("1 – aspak i mirë", "1 – uopšte nije dobar", "1-Not good at all"),
+                ("5 – shumë i mirë", "5 – veoma dobar", "5-Very good"),
+
+                ("88 – Refuzoj të përgjigjem", "Odbijam odgovoriti", "88-Refuse to answer"),
                 ("Refuzoj të përgjigjem", "Odbijam odgovoriti", "Refuse to answer")
             ]
-
+        
             demographic_pairs = [
                 ("D1. (GJINIA)", "D1. (ROD/POL)", "D1. (GENDER)"),
                 ("D2. (MOSHA) (vjet)", "D2. (STAROST) (godine)", "D2. (AGE) (years)"),
