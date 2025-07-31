@@ -11,6 +11,8 @@ QUESTION_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
+HINT_PATTERN = re.compile(r"\[ *Hint: *(.*?) *\]", re.IGNORECASE) 
+
 def clean_question_text(text):
     return QUESTION_PATTERN.sub("", text).strip()
 
@@ -28,18 +30,18 @@ def extract_matrix_table(table, data, parent_qid, parent_qtext):
     if not rows or len(rows) < 2:
         return
     headers = [cell.text.strip() for cell in rows[0].cells[1:] if cell.text.strip()]
-    data.append({"Question ID": parent_qid, "Question Text": parent_qtext, "Option ID": None, "Option Text": None})
+    data.append({"Question ID": parent_qid, "Question Text": parent_qtext, "Option ID": None, "Option Text": None, "hint": ""})
     for row_index, row in enumerate(rows[1:], start=1):
         cells = row.cells
         subquestion_text = cells[0].text.strip()
         if not subquestion_text:
             continue
         sub_qid = f"{parent_qid}_{row_index}"
-        data.append({"Question ID": sub_qid, "Question Text": subquestion_text, "Option ID": None, "Option Text": None})
+        data.append({"Question ID": sub_qid, "Question Text": subquestion_text, "Option ID": None, "Option Text": None, "hint": ""})
         for col_index, option_text in enumerate(headers, start=1):
             if option_text:
                 option_qid = f"{sub_qid}.{col_index}"
-                data.append({"Question ID": sub_qid, "Question Text": "", "Option ID": option_qid, "Option Text": option_text})
+                data.append({"Question ID": sub_qid, "Question Text": "", "Option ID": option_qid, "Option Text": option_text, "hint": ""})
 
 def extract_from_docx_to_excel(docx_file):
     doc = Document(docx_file)
@@ -55,38 +57,49 @@ def extract_from_docx_to_excel(docx_file):
             para_index += 1
             continue
 
-     
         if QUESTION_PATTERN.search(text) or re.match(r"^Q\d+\.", text):
             question_counter += 1
-            qid, cleaned = f"Q{question_counter}", clean_question_text(text)
+            qid = f"Q{question_counter}"
 
-            if "matrix" in text.lower():  
-                data.append({"Question ID": qid, "Question Text": cleaned, "Option ID": None, "Option Text": None})
+            hint_match = HINT_PATTERN.search(text)
+            hint_text = hint_match.group(1).strip() if hint_match else ""
+
+            cleaned = HINT_PATTERN.sub("", clean_question_text(text)).strip()
+
+            data.append({
+                "Question ID": qid,
+                "Question Text": cleaned,
+                "Option ID": None,
+                "Option Text": None,
+                "hint": hint_text
+            })
+
+            if "matrix" in text.lower():
                 if table_index < len(doc.tables):
                     last_matrix_qid, last_matrix_qtext = qid, cleaned
                     extract_matrix_table(doc.tables[table_index], data, qid, cleaned)
                     table_index += 1
                 skip_options = True
-
-            elif "scale" in text.lower(): 
-                data.append({"Question ID": qid, "Question Text": cleaned, "Option ID": None, "Option Text": None})
-                skip_options = True  
-
-            else: 
-                data.append({"Question ID": qid, "Question Text": cleaned, "Option ID": None, "Option Text": None})
+            elif "scale" in text.lower():
+                skip_options = True
+            else:
                 skip_options = False
 
-      
         elif is_list_option(para) and not skip_options and question_counter:
             prefix = get_numbering(para)
             full_option = f"{prefix} {text}" if prefix and not text.startswith(prefix) else text
             qid = f"Q{question_counter}"
             option_count = len([d for d in data if d['Question ID'] == qid and d['Option ID']])
-            data.append({"Question ID": qid, "Question Text": None, "Option ID": f"{qid}_option_{option_count+1}", "Option Text": full_option})
+            data.append({
+                "Question ID": qid,
+                "Question Text": None,
+                "Option ID": f"{qid}_option_{option_count+1}",
+                "Option Text": full_option,
+                "hint": ""  # Options don't have hints
+            })
 
         para_index += 1
 
-   
     while table_index < len(doc.tables):
         table = doc.tables[table_index]
         first_col = [row.cells[0].text.strip() for row in table.rows[1:] if row.cells and row.cells[0].text.strip()]
@@ -96,7 +109,6 @@ def extract_from_docx_to_excel(docx_file):
         table_index += 1
 
     return pd.DataFrame(data)
-
 
 st.title("Përkthimi i dokumenteve zyrtare")
 mode = st.radio("Zgjidh mënyrën:", ["Ngarko DOCX", "Ngarko XLSForm"])
@@ -132,6 +144,13 @@ elif mode == "Ngarko XLSForm":
         label_columns = [col for col in survey_df.columns if col.startswith("label::")]
         from_label = st.selectbox("Zgjidh kolonën në Excel prej nga do të përkthehet:", label_columns).strip()
         to_label = st.selectbox("Zgjidh kolonën në Excel ku do të vendoset përkthimi:", label_columns).strip()
+
+        hint_columns = [col for col in survey_df.columns if col.startswith("hint::")]
+        if hint_columns:
+            to_hint_col = st.selectbox("Zgjidh kolonën e hint-it ku do të vendoset (p.sh. Albanian ose Serbian):", hint_columns)
+        else:
+            st.warning("XLSForm nuk ka kolona për hint. Shtoni një kolonë 'hint::...' në XLSForm për të vazhduar.")
+            to_hint_col = None
 
         def detect_language(label_col):
             if "albanian" in label_col.lower():
@@ -382,6 +401,19 @@ elif mode == "Ngarko XLSForm":
             label_text = clean_label(label_text)
             match = re.match(r"(\d+(\.\d+)?)", label_text)
             return f"Q{match.group(1).replace('.', '_')}" if match else None
+        
+        if to_hint_col and "hint" in translated_df.columns:
+            hints_map = translated_df[["Question ID", "hint"]].dropna().set_index("Question ID")["hint"].to_dict()
+
+            def merge_hints(row):
+                qid = map_name_to_qid(row.get("name")) or guess_qid_from_label(row.get(from_label))
+                if qid and qid in hints_map:
+                    return hints_map[qid]
+                return row.get(to_hint_col, "")
+
+            survey_df[to_hint_col] = survey_df.apply(merge_hints, axis=1)
+        else:
+            st.warning("Kolona 'hint' nuk u gjet në dokumentin e ngarkuar të përkthyer.")
 
         def get_question_id(row):
             return map_name_to_qid(row.get("name")) or guess_qid_from_label(row.get(from_label))
