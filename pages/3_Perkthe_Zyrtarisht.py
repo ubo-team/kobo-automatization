@@ -422,7 +422,7 @@ elif mode == "Ngarko XLSForm":
             choices_df[to_label] = choices_df["Option ID"].map(option_translations).fillna("")
             choices_df[to_label] = choices_df[to_label].where(choices_df[to_label] != "", choices_df[from_label].apply(apply_manual))
         else:
-            st.warning(f"⚠️ Kolona '{from_label}' ose '{to_label}' nuk ekziston në fletën 'choices'. U anashkalua përkthimi i choices.")
+            st.warning(f"Kolona '{from_label}' ose '{to_label}' nuk ekziston në fletën 'choices'. U anashkalua përkthimi i choices.")
 
         choices_df.drop(columns=["Option ID"], inplace=True)
 
