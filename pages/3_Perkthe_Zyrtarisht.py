@@ -210,9 +210,25 @@ elif mode == "Ngarko XLSForm":
             ]
 
             extra_pairs = [("Mashkull", "Muško", "Male"), ("Femër", "Žensko", "Female")]
-            reason_pairs = [("Mungesa e kohës", "Nedostatak vremena", "Lack of time"), ("Jo i interesuar", "Nije zainteresovan", "Not interested")]
-            
-            
+            reason_pairs = [
+                ("Mungesa e kohës", "Nedostatak vremena", "Lack of time"),
+                ("Jo i interesuar", "Nije zainteresovan", "Not interested"),
+                ("Mbrojtja e të dhënave, përdorimi i të drejtës së privatësisë", 
+                "Zaštita podataka, korišćenje politike privatnosti", 
+                "Data protection, use of privacy rights"),
+                ("Nuk beson në sondazhe", "Ne veruje u ankete", "Does not believe in surveys"),
+                ("Të tjera (nuk di të përgjigjet, kushtet e motit, frikë nga pyetjet)", 
+                "Ostalo (ne zna da odgovori, vremenski uslovi, strah od pitanja)", 
+                "Other (don’t know how to answer, weather conditions, fear of questions)"),
+                ("Problemet e shëndetit", "Zdravstveni problemi", "Health problems"),
+                ("Moshë më e vjetër", "Starije godine", "Older age"),
+                ("Nuk i pëlqen subjekti i kërkimit", "Ne voli temu istraživanja", "Does not like research topic"),
+                ("Ka pasur një përvojë të keqe me sondazhet", 
+                "Imao/la je loše iskustvo sa anketama", 
+                "Had a bad experience with surveys"),
+                ("Asnjë arsye", "Nema razloga", "No reason")
+            ]
+
             demographic_pairs_answers = [
                 ("Mashkull", "Muško", "Male"),
                 ("Femër", "Žensko", "Female"),
@@ -250,7 +266,55 @@ elif mode == "Ngarko XLSForm":
                 ("Nuk kam realizuar fare të ardhura", "Nisam ostvario/la nikakav prihod.", "I had no income"),
                 ("Refuzon/PP", "Odbija/BO", "Refused/No answer")
             ]
-            all_pairs = core_pairs + likert_pairs + demographic_pairs + extra_pairs + reason_pairs + income_pairs + demographic_pairs_answers
+
+            frequency_pairs = [
+                ("Asnjëherë", "Nikad", "Never"),
+                ("Rallë", "Retko", "Rarely"),
+                ("Ndonjëherë", "Ponekad", "Sometimes"),
+                ("Shpesh", "Često", "Often"),
+                ("Gjithmonë", "Uvek", "Always")
+            ]
+
+            awareness_pairs = [
+                ("Shumë i informuar", "Veoma informisani", "Very informed"),
+                ("Deri diku i informuar", "Donekle informisani", "Somewhat informed"),
+                ("Deri diku jo i informuar", "Donekle ne informisani", "Somewhat uninformed"),
+                ("Aspak i informuar", "Potpuno ne informisani", "Not at all informed")
+            ]
+
+            satisfaction_pairs = [
+                ("Shumë të kënaqur", "Veoma zadovoljni", "Very satisfied"),
+                ("Deri diku i kënaqur", "Donekle zadovoljni", "Somewhat satisfied"),
+                ("Deri diku jo i kënaqur", "Donekle nezadovoljni", "Somewhat dissatisfied"),
+                ("Aspak i kënaqur", "Potpuno nezadovoljni", "Not at all satisfied"),
+                ("Shumë i/e kënaqur", "Veoma zadovoljni", "Very satisfied"),
+                ("I/e kënaqur", "Zadovoljni", "Satisfied"),
+                ("I/e pakënaqur", "Nezadovoljni", "Dissatisfied"),
+                ("Shumë i/e pakënaqur", "Veoma nezadovoljni", "Very dissatisfied"),
+                ("Nuk e di/refuzoj të përgjigjem (mos e lexo)", 
+                "Ne znam/Odbijam odgovoriti (nemojte čitati)", 
+                "Don't know/Refuse to answer (do not read)")
+            ]
+            employment_pairs = [
+                ("I papunësuar – duke kërkuar punë", "Nezaposlen/a – tražim posao", "Unemployed – seeking work"),
+                ("I papunësuar – duke mos kërkuar punë", "Nezaposlen/a – ne tražim posao", "Unemployed – not seeking work"),
+                ("I punësuar në sektorin publik", "Zaposlen/a u javnom sektoru", "Employed in public sector"),
+                ("I punësuar në sektorin privat", "Zaposlen/a u privatnom sektoru", "Employed in private sector"),
+                ("I punësuar kohë pas kohe", "Zaposlen/a s vremena na vreme", "Employed occasionally"),
+                ("Pensionist", "Penzioner", "Pensioner"),
+                ("Amvise", "Domaćica", "Housewife"),
+                ("Student/ nxënës", "Student/učenik", "Student/Pupil"),
+                ("Tjetër. Çka?", "Drugo. Šta?", "Other. What?")
+            ]
+
+            voting_pairs = [
+                ("Gjithsesi do të votoja", "Svakako bih glasao/ala", "Definitely would vote"),
+                ("Ndoshta do të votoja", "Možda bih glasao/ala", "Might vote"),
+                ("Me gjasë nuk do të votoja", "Verovatno ne bih glasao/ala", "Probably would not vote"),
+                ("Definitivisht nuk do të votoja", "Definitivno ne bih glasao/ala", "Definitely would not vote")
+            ]
+
+            all_pairs = core_pairs + voting_pairs + employment_pairs + satisfaction_pairs + awareness_pairs + frequency_pairs + likert_pairs + demographic_pairs + extra_pairs + reason_pairs + income_pairs + demographic_pairs_answers
 
             for al, sr, en in all_pairs:
                 manual_al_to_sr[clean_label(al)] = sr
