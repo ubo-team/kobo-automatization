@@ -115,12 +115,20 @@ if uploaded_file and st.button("Run Analysis"):
                     u_diff = utilities[resp_ids, best_ids] - utilities[resp_ids, worst_ids]
                     observed_data = np.ones(len(best_ids), dtype=np.int8)
                     pm.Bernoulli("obs", logit_p=u_diff, observed=observed_data)
-                    trace = pm.sample(1000, tune=1000, target_accept=0.9, chains=2, return_inferencedata=True)
+                    trace = pm.sample(1000, tune=2000, target_accept=0.95, chains=4, return_inferencedata=True)
 
             summary_df = az.summary(trace, var_names=["mu"])
             summary_df.index = [f"mu[{i}]" for i in range(len(summary_df))]
             summary_df["Attribute"] = [attributes[i] for i in range(len(attributes))]
             summary_df = summary_df.reset_index(drop=True)
+            
+            # Calculate Relative Importance (0–100)
+            min_util = summary_df["mean"].min()
+            max_util = summary_df["mean"].max()
+            summary_df["Relative Importance (0–100)"] = ((summary_df["mean"] - min_util) / (max_util - min_util) * 100).round(1)
+
+            # Sort by importance descending
+            summary_df = summary_df.sort_values(by="Relative Importance (0–100)", ascending=False)
             st.dataframe(summary_df, use_container_width=True)
 
             csv = summary_df.to_csv(index=False)
