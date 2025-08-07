@@ -4,6 +4,8 @@ import numpy as np
 from collections import defaultdict
 import pymc as pm
 import arviz as az
+from pymc import floatX
+
 
 st.set_page_config(page_title="MaxDiff Analyzer", layout="wide")
 st.title("MaxDiff Analysis Tool")
@@ -113,7 +115,7 @@ if uploaded_file and st.button("Run Analysis"):
                     sigma = pm.HalfNormal("sigma", sigma=1)
                     utilities = pm.Normal("utilities", mu=mu, sigma=sigma, shape=(n_resp, n_attrs))
                     u_diff = utilities[resp_ids, best_ids] - utilities[resp_ids, worst_ids]
-                    pm.Bernoulli("obs", logits=u_diff, observed=np.ones(len(u_diff)))
+                    pm.Bernoulli("obs", logits=u_diff, observed=floatX(np.ones(u_diff.shape[0])))
                     trace = pm.sample(1000, tune=1000, target_accept=0.9, chains=2, return_inferencedata=True)
 
             summary_df = az.summary(trace, var_names=["mu"])
