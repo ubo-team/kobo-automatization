@@ -1,4 +1,6 @@
 streamlit
+pymc
+arviz
 pandas
 requests
 Pillow
