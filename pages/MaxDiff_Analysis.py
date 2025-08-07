@@ -8,7 +8,11 @@ import arviz as az
 st.set_page_config(page_title="MaxDiff Analyzer", layout="wide")
 st.title("MaxDiff Analysis Tool")
 
-uploaded_file = st.file_uploader("Upload your MaxDiff CSV file", type="csv", help="File must include: Attribute 1–5, Best, Worst")
+uploaded_file = st.file_uploader(
+    "Upload your MaxDiff CSV file", 
+    type="csv", 
+    help="File must include: Attribute 1–5, Best, Worst"
+)
 
 model_choice = st.selectbox("Choose analysis model", [
     "Simple Count Analysis", 
@@ -60,7 +64,7 @@ if uploaded_file and st.button("Run Analysis"):
                 "Score (Simple Count Analysis)": round(score, 3)
             })
 
-        results_df = pd.DataFrame(results).sort_values(by="Rezultati (Analizë e thjeshtë)", ascending=False)
+        results_df = pd.DataFrame(results).sort_values(by="Score (Simple Count Analysis)", ascending=False)
         st.dataframe(results_df, use_container_width=True)
 
         if warnings:
@@ -69,7 +73,7 @@ if uploaded_file and st.button("Run Analysis"):
                     st.write(w)
 
         csv = results_df.to_csv(index=False)
-        st.download_button("Shkarko rezultatet (CSV)", csv, file_name="rezultatet_analize_thjeshte.csv")
+        st.download_button("Download Results (CSV)", csv, file_name="simple_count_analysis_results.csv")
 
     elif model_choice == "Hierarchical Bayesian (HB) Analysis":
         st.subheader("Results: Hierarchical Bayesian (HB) Analysis")
@@ -119,4 +123,4 @@ if uploaded_file and st.button("Run Analysis"):
             st.dataframe(summary_df, use_container_width=True)
 
             csv = summary_df.to_csv(index=False)
-            st.download_button("Shkarko rezultatet (CSV)", csv, file_name="rezultatet_HB.csv")
+            st.download_button("Download Results (CSV)", csv, file_name="hb_analysis_results.csv")
