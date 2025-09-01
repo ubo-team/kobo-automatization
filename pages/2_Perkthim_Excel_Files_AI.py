@@ -6,11 +6,6 @@ import re
 from PIL import Image
 import os
 
-import streamlit as st, os
-st.write("Loaded secret keys:", list(st.secrets.keys()))
-if "AZURE_TRANSLATOR_KEY" not in st.secrets:
-    st.error("AZURE_TRANSLATOR_KEY is missing from st.secrets. Open Manage app → Settings → Secrets.")
-    st.stop()
 
 
 st.set_page_config(page_title="Perkthim Excel Files A", layout="centered")
