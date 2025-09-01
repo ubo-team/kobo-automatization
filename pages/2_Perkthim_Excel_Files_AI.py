@@ -67,7 +67,7 @@ def translate_text(text, from_lang, to_lang):
 
     headers = {
         'Ocp-Apim-Subscription-Key': AZURE_TRANSLATOR_KEY,
-        'Ocp-Apim-Subscription-Region': AZURE_REGION,
+        'Ocp-Apim-Subscription-Region': AZURE_TRANSLATOR_REGION,
         'Content-type': 'application/json'
     }
 

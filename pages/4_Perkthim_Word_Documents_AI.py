@@ -48,7 +48,7 @@ def split_multiline_text(text):
 def batch_translate_lines(lines, from_lang, to_lang):
     headers = {
         "Ocp-Apim-Subscription-Key": AZURE_TRANSLATOR_KEY,
-        "Ocp-Apim-Subscription-Region": AZURE_REGION,
+        "Ocp-Apim-Subscription-Region": AZURE_TRANSLATOR_REGION,
         "Content-type": "application/json"
     }
     params = {"api-version": "3.0", "from": from_lang, "to": [to_lang]}
