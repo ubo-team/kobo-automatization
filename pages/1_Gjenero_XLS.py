@@ -9,6 +9,7 @@ from google.oauth2.service_account import Credentials
 import gspread
 from io import BytesIO
 
+
 st.set_page_config(page_title="Gjenero XLS", layout="centered")
 
 logo_path = "logo.png"
@@ -24,42 +25,60 @@ uploaded_file = st.file_uploader("Zgjidh një dokument `.docx` të formatuar:", 
 def sanitize_name(label):
     return re.sub(r'\W+', '_', label.lower().strip())[:30]
 
-def extract_type_and_count(text):
-    matrix_match = re.search(r'\[matrix (single|multiple) (\d+)\]', text, re.IGNORECASE)
-    if matrix_match:
-        return f"matrix {matrix_match.group(1)}", int(matrix_match.group(2))
+def extract_tags(text):
+    """Extract all bracketed tags like [random], [hint: ...], [single], [scale ...] etc."""
+    return re.findall(r'\[(.*?)\]', text, flags=re.IGNORECASE)
 
-    ranking_match = re.search(r'\[ranking (\d+)\]', text, re.IGNORECASE)
-    if ranking_match:
-        return f"ranking {ranking_match.group(1)}", int(ranking_match.group(1))
+def parse_question_tags(tags):
+    """Classify tags into type, parameters, and hint."""
+    q_type = None
+    matrix_count = None
+    hint = None
+    parameters = None
 
-    scale_match = re.search(r'\[scale\s*(\d+)(?:\((.*?)\))?\s*-\s*(\d+)(?:\((.*?)\))?\]', text, re.IGNORECASE)
-    if scale_match:
-        start, min_label, end, max_label = scale_match.groups()
-        return f"scale {start}-{end}", {
-            "start": int(start),
-            "end": int(end),
-            "min_label": min_label,
-            "max_label": max_label
-        }
+    for raw_tag in tags:
+        tag = raw_tag.strip().lower()
 
-    generic_match = re.search(r'\[(.*?)\]', text)
-    if generic_match:
-        raw_type = generic_match.group(1).lower()
-        valid_types = [
-            "single", "multiple", "text", "string", "numeric", "matrix single", "matrix multiple",
-            "ranking", "note", "random", "other"
-        ]
-        if raw_type.startswith("scale") or raw_type.startswith("ranking") or raw_type.startswith("matrix"):
-            return raw_type, None
-        elif raw_type in valid_types:
-            return raw_type, None
-        elif raw_type.startswith("hint:"):
-            return None, None  # let hint be handled separately
-        else:
-            raise ValueError(f"Tipi i pyetjes nuk njihet: [{raw_type}]")
-    else:
-        return None, None
+        # Randomization
+        if tag == "random":
+            parameters = "randomize=true"
+
+        # Hint tag
+        elif tag.startswith("hint:"):
+            hint = raw_tag.split(":", 1)[1].strip()
+
+        # Matrix type
+        elif tag.startswith("matrix"):
+            m = re.match(r"matrix\s+(single|multiple)\s+(\d+)", tag)
+            if m:
+                q_type = f"matrix {m.group(1)}"
+                matrix_count = int(m.group(2))
+
+        # Ranking type
+        elif tag.startswith("ranking"):
+            m = re.match(r"ranking\s+(\d+)", tag)
+            if m:
+                q_type = f"ranking {m.group(1)}"
+                matrix_count = int(m.group(1))
+
+        # Scale type
+        elif tag.startswith("scale"):
+            m = re.match(r"scale\s*(\d+)(?:\((.*?)\))?\s*-\s*(\d+)(?:\((.*?)\))?", tag)
+            if m:
+                start, min_label, end, max_label = m.groups()
+                q_type = f"scale {start}-{end}"
+                matrix_count = {
+                    "start": int(start),
+                    "end": int(end),
+                    "min_label": min_label,
+                    "max_label": max_label
+                }
+
+        # Generic question types
+        elif tag in ["single", "multiple", "text", "string", "numeric", "note", "other"]:
+            q_type = tag
+
+    return q_type, matrix_count, parameters, hint
 
 def strip_type(text):
     return re.sub(r'\s*\[.*?\]\s*', '', text).strip()
@@ -175,8 +194,18 @@ def generate_xlsform(input_docx, output_xlsx, data_method=True, selected_questio
             i += 1
             continue
 
-        q_type, matrix_count = extract_type_and_count(line)
-        
+        # STEP 1: Extract all tags (like [single], [random], [hint:...])
+        tags = extract_tags(line)
+
+        # STEP 2: Parse those tags to understand type, hint, and randomization
+        q_type, matrix_count, parameters, hint = parse_question_tags(tags)
+
+        # STEP 3: Remove all tags from text so only question text remains
+        full_line = strip_type(line)
+
+        # STEP 4: Extract the question number and text
+        qnum, label_text = extract_question_number_and_text(full_line)
+       
             # Skip if q_type is "other"
         if q_type == "other":
             # Collect label for display
@@ -187,20 +216,7 @@ def generate_xlsform(input_docx, output_xlsx, data_method=True, selected_questio
             i += 1
             continue
 
-        is_random = has_random_tag(line)
-        parameters = "randomize=true" if is_random else None
-
         if q_type:
-            # Extract hint if present
-            hint = None
-            hint_match = re.search(r'\[hint:\s*(.*?)\]', line, flags=re.IGNORECASE)
-            if hint_match:
-                hint = hint_match.group(1).strip()
-                line = re.sub(r'\[hint:\s*.*?\]', '', line, flags=re.IGNORECASE)
-            
-            full_line = strip_type(line)
-            qnum, label_text = extract_question_number_and_text(full_line)
-
             if selected_questions is not None and label_text in selected_questions:
                 i += 1
                 continue
@@ -238,7 +254,9 @@ def generate_xlsform(input_docx, output_xlsx, data_method=True, selected_questio
             def collect_options(start_index):
                 opts = []
                 while start_index < len(lines):
-                    next_type, _ = extract_type_and_count(lines[start_index])
+                    tags = extract_tags(lines[start_index])
+                    next_type, _, _, _ = parse_question_tags(tags)
+
                     if next_type:
                         break
                     opts.append(lines[start_index])
@@ -331,7 +349,11 @@ def generate_xlsform(input_docx, output_xlsx, data_method=True, selected_questio
                 i += matrix_count
 
                 rows = []
-                while i < len(lines) and not extract_type_and_count(lines[i])[0]:
+                while i < len(lines):
+                    tags = extract_tags(lines[i])
+                    next_type, _, _, _ = parse_question_tags(tags)
+                    if next_type:
+                        break
                     rows.append(lines[i])
                     i += 1
 
@@ -381,7 +403,11 @@ def generate_xlsform(input_docx, output_xlsx, data_method=True, selected_questio
 
                     i += 1
                     options = []
-                    while i < len(lines) and not extract_type_and_count(lines[i])[0]:
+                    while i < len(lines):
+                        tags = extract_tags(lines[i])
+                        next_type, _, _, _ = parse_question_tags(tags)
+                        if next_type:
+                            break
                         options.append(lines[i])
                         i += 1
 
@@ -438,14 +464,20 @@ if uploaded_file:
     question_options = []
     for line in lines:
         try:
-            q_type, _ = extract_type_and_count(line)
+            # Extract all tags from this line (e.g., [random][single][hint: ...])
+            tags = extract_tags(line)
+            q_type, _, _, _ = parse_question_tags(tags)
+
+            # Only process lines that define a question type
             if q_type:
                 _, label_text = extract_question_number_and_text(strip_type(line))
                 if label_text:
                     question_options.append(label_text)
+
         except ValueError as e:
             st.error(f"Gabim në rreshtin: **{line}**\n\n{str(e)}")
             st.stop()
+
 
     st.session_state["question_lines"] = lines
     selected_questions = st.multiselect(
