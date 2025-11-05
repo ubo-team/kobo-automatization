@@ -153,6 +153,16 @@ def generate_xlsform(input_docx, output_xlsx, data_method=True, selected_questio
     skipped_other_questions = []
     settings = [{'style': 'theme-grid no-text-transform'}]
 
+    survey.append({
+       "type": "start",
+        "name": "start"
+    })
+    
+    survey.append({
+       "type": "end",
+        "name": "end"
+    })
+    
     if data_method:
         survey.append({
             "type": "geopoint",
@@ -516,4 +526,5 @@ if uploaded_file:
                 st.info("Pyetjet me tag-un [other] që u anashkaluan:")
                 for q in st.session_state["skipped_other_questions"]:
                     st.markdown(f"- {q}")
+
 
