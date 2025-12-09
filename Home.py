@@ -143,8 +143,8 @@ def load_svg(path):
 # ---------------------------------------------------------------
 # LAYOUT (3×2 KARTA)
 # ---------------------------------------------------------------
-st.title("Platforma për Menaxhimin e Pyetësorëve")
-st.markdown("Zgjidh një nga veglat për të vazhduar")
+st.markdown("<h1 style='text-align: center;'>Platforma për Menaxhimin e Pyetësorëve</h1>", unsafe_allow_html=True)
+st.markdown("<p style='text-align: center;'>Zgjidh një nga veglat për të vazhduar</p>", unsafe_allow_html=True)
 st.markdown("---")
 
 # ROW 1
