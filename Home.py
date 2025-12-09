@@ -168,37 +168,39 @@ with col2:
 
 with col3:
     card(
-        "Përkthim Zyrtar",
-        "Përkthime të verifikuara dhe zyrtare për dokumentet që kërkojnë saktësi të plotë.",
-        "Perkthe_Zyrtarisht",
-        "icons/language-exchange.svg"
-    )
-
-st.markdown("<div class='row-spacer'></div>", unsafe_allow_html=True)
-
-# ROW 2
-col4, col5, col6 = st.columns(3)
-
-with col4:
-    card(
         "Përkthim Word Documents AI",
         "Përkthe dokumente Word shpejt dhe saktë me teknologji të avancuar AI.",
         "Perkthim_Word_Documents_AI",
         "icons/file-word.svg"
     )
 
-with col5:
+
+st.markdown("<div class='row-spacer'></div>", unsafe_allow_html=True)
+
+# ROW 2
+col4, col5, col6 = st.columns(3)
+
+
+with col4:
     card(
-        "Dokumentimi",
-        "Qasje e plotë në manuale, udhëzime dhe resurse të platformës.",
-        "Dokumentimi",
-        "icons/info.svg"
+        "Përkthim Zyrtar",
+        "Përkthime të verifikuara dhe zyrtare për dokumentet që kërkojnë saktësi të plotë.",
+        "Perkthe_Zyrtarisht",
+        "icons/language-exchange.svg"
     )
 
-with col6:
+with col5:
     card(
         "MaxDiff Analysis",
         "Analizo të dhënat me metodën MaxDiff për rezultate të thelluara.",
         "MaxDiff_Analysis",
         "icons/analyse.svg"
+    )
+
+with col6:
+    card(
+        "Dokumentimi",
+        "Qasje e plotë në manuale, udhëzime dhe resurse të platformës.",
+        "Dokumentimi",
+        "icons/info.svg"
     )
