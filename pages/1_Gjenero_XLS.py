@@ -133,8 +133,34 @@ def load_anketuesit_choices():
         st.error("Gabim: Nuk u gjetën të dhëna në kolonat E dhe F.")
 
     return choices 
+
+def generate_qname(qnum, q_index, coding_mode):
+    """
+    Returns (qname, updated_q_index)
+    """
+
+    # Case 1: No number in Word → always P1, P2…
+    if not qnum:
+        return f"P{q_index}", q_index + 1
+
+    qnum_clean = qnum.rstrip('.')
+
+    # Case 2: D-questions → ALWAYS preserved
+    if qnum_clean.upper().startswith("D"):
+        return qnum_clean, q_index
+
+    # Case 3: User wants original numbering
+    if coding_mode == "Ruaj numërimin origjinal si në Word (A1, B2a, C1, …)":
+        return qnum_clean, q_index
+
+    # Case 4: User wants Q1, Q2…
+    if coding_mode == "Q1, Q2, Q3, ...":
+        return f"Q{q_index}", q_index + 1
+
+    # Case 5: Default → P1, P2…
+    return f"P{q_index}", q_index + 1
   
-def generate_xlsform(input_docx, output_xlsx, data_method=True, selected_questions=None):
+def generate_xlsform(input_docx, output_xlsx, coding_mode, data_method=True, selected_questions=None):
     ranking_labels = [
         "Zgjedhja e parë", "Zgjedhja e dytë", "Zgjedhja e tretë",
         "Zgjedhja e katërt", "Zgjedhja e pestë", "Zgjedhja e gjashtë",
@@ -236,20 +262,7 @@ def generate_xlsform(input_docx, output_xlsx, data_method=True, selected_questio
 
             label = f"{qnum}. {label_text}" if qnum else full_line
 
-            if qnum:
-                if qnum.upper().startswith("D"):
-                    qname = qnum
-                elif re.match(r'Q[\d\w\.]+', qnum, re.IGNORECASE):
-                    qname = re.sub(r'^[Qq]', 'P', qnum)
-                elif qnum.isdigit():
-                    qname = f"P{q_index}"
-                    q_index += 1
-                else:
-                    qname = f"P{q_index}"
-                    q_index += 1
-            else:
-                qname = f"P{q_index}"
-                q_index += 1
+            qname, q_index = generate_qname(qnum, q_index, coding_mode)
 
             qname = qname.rstrip('.')
             required = "yes"
@@ -442,7 +455,7 @@ def generate_xlsform(input_docx, output_xlsx, data_method=True, selected_questio
     return skipped_other_questions
 
 
-def process_uploaded_docx(uploaded_bytesio, filename, data_method, selected_questions):
+def process_uploaded_docx(uploaded_bytesio, filename, data_method, selected_questions, coding_mode):
     base_name = os.path.splitext(filename)[0]
     generated_name = f"{base_name}_gjeneruar.xlsx"
     temp_xlsx_path = os.path.join(tempfile.gettempdir(), generated_name)
@@ -452,7 +465,7 @@ def process_uploaded_docx(uploaded_bytesio, filename, data_method, selected_ques
         with tempfile.NamedTemporaryFile(delete=False, suffix=".docx") as tmp:
             tmp.write(uploaded_bytesio.read())
             tmp.flush()
-            skipped = generate_xlsform(tmp.name, temp_xlsx_path, data_method, selected_questions)
+            skipped = generate_xlsform(tmp.name, temp_xlsx_path, coding_mode, data_method, selected_questions)
         return temp_xlsx_path, generated_name, None, skipped
     except Exception as e:
         return None, None, str(e), None
@@ -466,6 +479,15 @@ if uploaded_file:
     "Metoda e mbledhjes së të dhënave:",
     ["Face to face", "Telefon/Online"] 
     )
+
+    coding_mode = st.radio(
+    "Si të kodohen pyetjet që kanë numërim në Word?",
+    options=[
+        "P1, P2, P3, ...",
+        "Q1, Q2, Q3, ...",
+        "Ruaj numërimin origjinal si në Word (A1, B2a, C1, …)"
+    ], index=0)
+
 
     doc = docx2python(uploaded_bytesio).text
     lines = [line.strip() for line in doc.split('\n') if line.strip()]
@@ -504,7 +526,7 @@ if uploaded_file:
             with st.spinner("Po përpunon dokumentin..."):
                 data_method = data_collection_method == "Face to face"
                 uploaded_bytesio.seek(0)
-                xlsx_path, generated_file_name, error, skipped = process_uploaded_docx(uploaded_bytesio, uploaded_file.name, data_method, st.session_state.get("selected_questions", None))
+                xlsx_path, generated_file_name, error, skipped = process_uploaded_docx(uploaded_bytesio, uploaded_file.name, data_method, st.session_state.get("selected_questions", None), coding_mode)
         
                 if error:
                     st.error(f"Gabimi: {error}")

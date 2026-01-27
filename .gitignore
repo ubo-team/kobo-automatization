@@ -1,2 +1,3 @@
 # Ignore service account keys
 service_account.json
+secrets.toml
