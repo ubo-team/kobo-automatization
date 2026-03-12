@@ -10,4 +10,5 @@ docx2python
 google-auth
 gspread
 regex
-genai
+google-generativeai
+numpy
