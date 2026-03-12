@@ -1,9 +1,13 @@
 import streamlit as st
-from PIL import Image
 import os
 
+
+def load_svg(path):
+    with open(path, "r", encoding="utf-8") as f:
+        return f.read()
+
 st.set_page_config(
-    page_title="Platforma për Menaxhimin e Pyetësorëve",
+    page_title="UBO AI Tools",
     layout="wide",
 )
 
@@ -24,23 +28,19 @@ div[data-testid="stAppViewContainer"] > .main {
 # ---------------------------------------------------------------
 # SIDEBAR LOGO
 # ---------------------------------------------------------------
-logo_path = "logo.png"
+logo_svg_path = "UBO-Logo.svg"
 
 with st.sidebar:
-    if os.path.exists(logo_path):
-        st.image(Image.open(logo_path), width=150)
-
-    st.markdown("""
-        <style>
-        [data-testid="stSidebar"] img {
-            display: block;
-            margin-left: auto;
-            margin-right: auto;
-            margin-top: 15px;
-            margin-bottom: 15px;
-        }
-        </style>
-    """, unsafe_allow_html=True)
+    if os.path.exists(logo_svg_path):
+        svg_logo = load_svg(logo_svg_path)
+        st.markdown(
+            f"""
+            <div style="display:flex;justify-content:center;margin:15px 0;">
+                <div style="width:150px;">{svg_logo}</div>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
 
 
 # ---------------------------------------------------------------
@@ -71,7 +71,7 @@ st.markdown("""
 .card-title {
     font-size: 20px;
     font-weight: 600;
-    margin: 0;   /* reset margins */
+    margin: 0;
     line-height: 1.2;
 }
 
@@ -129,21 +129,27 @@ def card(title, description, page, icon_path):
     )
 
 
-def render_svg(svg_string):
-    """Renders an SVG string as HTML."""
-    b64 = svg_string.encode("utf-8").decode("utf-8")
-    html = f"<div>{b64}</div>"
-    st.markdown(html, unsafe_allow_html=True)
-
-def load_svg(path):
-    with open(path, "r", encoding="utf-8") as f:
-        return f.read()
-
 
 # ---------------------------------------------------------------
 # LAYOUT (3×2 KARTA)
 # ---------------------------------------------------------------
-st.markdown("<h1 style='text-align: center;'>Platforma për Menaxhimin e Pyetësorëve</h1>", unsafe_allow_html=True)
+if os.path.exists(logo_svg_path):
+    main_logo = load_svg(logo_svg_path)
+    st.markdown(
+        f"""
+        <div style="display:flex;justify-content:center;margin-bottom:10px;">
+            <div class="main-logo" style="width:140px;">{main_logo}</div>
+        </div>
+        <style>
+            .main-logo svg {{
+                width: 100%;
+                height: auto;
+            }}
+        </style>
+        """,
+        unsafe_allow_html=True
+    )
+st.markdown("<h1 style='text-align: center;'>Platforma e AI dhe Automatizimit</h1>", unsafe_allow_html=True)
 st.markdown("<p style='text-align: center;'>Zgjidh një nga veglat për të vazhduar</p>", unsafe_allow_html=True)
 st.markdown("---")
 
@@ -199,8 +205,8 @@ with col5:
 
 with col6:
     card(
-        "Dokumentimi",
-        "Qasje e plotë në manuale, udhëzime dhe resurse të platformës.",
-        "Dokumentimi",
-        "icons/info.svg"
+        "Grupimi i pyetjeve të hapura",
+        "Grupo pyetjet e hapura sipas kategorive të paracaktuara.",
+        "Grupimi_i_pyetjeve_të_hapura",
+        "icons/grouping.svg"
     )

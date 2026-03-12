@@ -3,7 +3,6 @@ import requests
 import streamlit as st
 from io import BytesIO
 import re
-from PIL import Image
 import os
 import docx
 from docx import Document
@@ -12,10 +11,15 @@ from docx.shared import Pt
 st.set_page_config(page_title="Përkthe Word Dokumente me AI", layout="centered")
 
 
-logo_path = "logo.png"
+logo_svg_path = "UBO-Logo.svg"
 with st.sidebar:
-    if os.path.exists(logo_path):
-        st.image(Image.open(logo_path), width=150)
+    if os.path.exists(logo_svg_path):
+        with open(logo_svg_path, "r", encoding="utf-8") as f:
+            svg_logo = f.read()
+        st.markdown(
+            f'<div style="display:flex;justify-content:center;margin:15px 0;"><div style="width:150px;">{svg_logo}</div></div>',
+            unsafe_allow_html=True
+        )
     st.markdown("""
         <style>
         [data-testid="stSidebar"] img {

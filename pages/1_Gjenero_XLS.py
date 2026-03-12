@@ -4,7 +4,6 @@ import pandas as pd
 import re
 import tempfile
 import os
-from PIL import Image
 from google.oauth2.service_account import Credentials
 import gspread
 from io import BytesIO
@@ -12,10 +11,15 @@ from io import BytesIO
 
 st.set_page_config(page_title="Gjenero XLS", layout="centered")
 
-logo_path = "logo.png"
+logo_svg_path = "UBO-Logo.svg"
 with st.sidebar:
-    if os.path.exists(logo_path):
-        st.image(Image.open(logo_path), width=150)
+    if os.path.exists(logo_svg_path):
+        with open(logo_svg_path, "r", encoding="utf-8") as f:
+            svg_logo = f.read()
+        st.markdown(
+            f'<div style="display:flex;justify-content:center;margin:15px 0;"><div style="width:150px;">{svg_logo}</div></div>',
+            unsafe_allow_html=True
+        )
 
 st.title("Gjenero XLS")
 st.markdown("Ngarko dokumentin `.docx` dhe gjenero formularin XLS për përdorim në Kobo Toolbox.")
