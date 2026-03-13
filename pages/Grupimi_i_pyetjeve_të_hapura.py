@@ -1,10 +1,12 @@
 import os
+import io
+import re
+import time
+from collections import Counter
+
 import streamlit as st
 import pandas as pd
 import google.generativeai as genai
-import io
-import re
-from collections import Counter
 
 # -------------------------------
 # Page Configuration
@@ -44,14 +46,14 @@ genai.configure(api_key=GEMINI_API_KEY)
 # ── Pricing ──────────────────────────────────────────────────────────────────
 GEMINI_PRICING = {
     "models/gemini-2.5-pro": {
-        "inputPer1MTokens_low":   1.25,
-        "outputPer1MTokens_low":  10.00,
-        "inputPer1MTokens_high":  2.50,
+        "inputPer1MTokens_low": 1.25,
+        "outputPer1MTokens_low": 10.00,
+        "inputPer1MTokens_high": 2.50,
         "outputPer1MTokens_high": 15.00,
         "tier_threshold": 200_000,
     },
     "models/gemini-2.5-flash": {
-        "inputPer1MTokens":  0.30,
+        "inputPer1MTokens": 0.30,
         "outputPer1MTokens": 2.50,
     },
 }
@@ -59,23 +61,28 @@ GEMINI_PRICING = {
 
 def calculate_gemini_cost(prompt_tokens: int, completion_tokens: int, model: str) -> float:
     pricing = GEMINI_PRICING.get(model, GEMINI_PRICING["models/gemini-2.5-pro"])
+
     if "tier_threshold" in pricing:
         high = (prompt_tokens or 0) > pricing["tier_threshold"]
-        input_rate  = pricing["inputPer1MTokens_high"]  if high else pricing["inputPer1MTokens_low"]
+        input_rate = pricing["inputPer1MTokens_high"] if high else pricing["inputPer1MTokens_low"]
         output_rate = pricing["outputPer1MTokens_high"] if high else pricing["outputPer1MTokens_low"]
     else:
-        input_rate  = pricing["inputPer1MTokens"]
+        input_rate = pricing["inputPer1MTokens"]
         output_rate = pricing["outputPer1MTokens"]
-    input_cost  = ((prompt_tokens     or 0) / 1_000_000) * input_rate
+
+    input_cost = ((prompt_tokens or 0) / 1_000_000) * input_rate
     output_cost = ((completion_tokens or 0) / 1_000_000) * output_rate
     return round(input_cost + output_cost, 8)
 
 
 # ── Page header ──────────────────────────────────────────────────────────────
 st.title("Grupimi i pyetjeve të hapura")
-st.markdown("Ngarko një dokument Excel me përgjigje të hapura. Aplikacioni do t'i kategorizojë automatikisht duke përdorur Gemini API.")
+st.markdown(
+    "Ngarko një dokument Excel me përgjigje të hapura. "
+    "Aplikacioni do t'i kategorizojë automatikisht duke përdorur Gemini API."
+)
 
-# ── Default prompt ────────────────────────────────────────────────────────────
+# ── Default prompt ───────────────────────────────────────────────────────────
 DEFAULT_PROMPT = """You are a survey response categorizer. Your task is to assign ONE category to each survey response in a batch.
 
 Question: {question_label}
@@ -99,46 +106,128 @@ Output one category per line in the same order (numbered to match), e.g.:
 2. Category
 ..."""
 
-# ── Session state ─────────────────────────────────────────────────────────────
+# ── Session state ────────────────────────────────────────────────────────────
 if "question_categories" not in st.session_state:
     st.session_state.question_categories = {}
+
 if "prompt_template" not in st.session_state or "{response}" in st.session_state.prompt_template:
     st.session_state.prompt_template = DEFAULT_PROMPT
+
+
+# ── Progress helpers ─────────────────────────────────────────────────────────
+PROGRESS_DIR = "progress_files"
+os.makedirs(PROGRESS_DIR, exist_ok=True)
+
+
+def get_progress_file_name(uploaded_file_name: str) -> str:
+    base_name = os.path.splitext(uploaded_file_name)[0]
+    safe_name = re.sub(r"[^A-Za-z0-9_\-]", "_", base_name)
+    return os.path.join(PROGRESS_DIR, f"{safe_name}_categorized_progress.xlsx")
+
+
+def save_progress(result_df: pd.DataFrame, progress_file: str):
+    """
+    Safe save using temp file then atomic replace.
+    """
+    temp_file = progress_file.replace(".xlsx", "_tmp.xlsx")
+    result_df.to_excel(temp_file, index=False, engine="openpyxl")
+    os.replace(temp_file, progress_file)
+
+
+def is_missing_label(value) -> bool:
+    """
+    Treat empty, NaN, and Error as missing so failed rows can retry later.
+    """
+    if pd.isna(value):
+        return True
+    value = str(value).strip()
+    return value == "" or value.lower() in ["nan", "error"]
+
 
 # ── Settings ─────────────────────────────────────────────────────────────────
 with st.expander("Cilësimet", expanded=False):
     col_model, col_batch = st.columns(2)
+
     with col_model:
-        model_name = st.selectbox("Model", ["gemini-2.5-flash", "gemini-2.5-pro"], index=0)
+        model_name = st.selectbox(
+            "Model",
+            ["gemini-2.5-flash", "gemini-2.5-pro"],
+            index=0
+        )
+
     with col_batch:
-        batch_size = st.number_input("Batch size (rreshta per thirrje)", min_value=5, max_value=100, value=20, step=5)
+        batch_size = st.number_input(
+            "Batch size (rreshta per thirrje)",
+            min_value=5,
+            max_value=100,
+            value=20,
+            step=5
+        )
 
     st.divider()
     st.subheader("Prompt Template")
     st.caption("Placeholders: `{question_label}`, `{categories}`, `{responses}`")
+
     st.session_state.prompt_template = st.text_area(
         "Edit prompt",
         value=st.session_state.prompt_template,
         height=320,
         label_visibility="collapsed",
     )
+
     if st.button("Rivendos prompt-in fillestar"):
         st.session_state.prompt_template = DEFAULT_PROMPT
         st.rerun()
 
 st.markdown("---")
 
-# ── Step 1: Upload file ───────────────────────────────────────────────────────
+# ── Step 1: Upload file ──────────────────────────────────────────────────────
 st.header("1. Ngarko dokumentin Excel")
-uploaded_file = st.file_uploader("Dokument Excel me Response ID + kolona me përgjigje të hapura", type=["xlsx", "xls"])
+uploaded_file = st.file_uploader(
+    "Dokument Excel me Response ID + kolona me përgjigje të hapura",
+    type=["xlsx", "xls"]
+)
 
 df = None
 question_cols = []
+progress_file = None
 
 if uploaded_file:
-    df = pd.read_excel(uploaded_file)
+    original_df = pd.read_excel(uploaded_file)
+    progress_file = get_progress_file_name(uploaded_file.name)
+
+    col_a, col_b = st.columns([3, 1])
+
+    with col_a:
+        use_saved_progress = False
+        if os.path.exists(progress_file):
+            use_saved_progress = st.checkbox(
+                "Përdor progresin e ruajtur më parë",
+                value=True,
+                help="Nëse zgjidhet, aplikacioni do të vazhdojë nga versioni i ruajtur dhe nuk do të dërgojë sërish rreshtat e kategorizuar."
+            )
+
+    with col_b:
+        if os.path.exists(progress_file):
+            if st.button("Fshi progresin"):
+                os.remove(progress_file)
+                st.success("Progresi i ruajtur u fshi.")
+                st.rerun()
+
+    if use_saved_progress and os.path.exists(progress_file):
+        try:
+            df = pd.read_excel(progress_file)
+            st.info("U ngarkua versioni i ruajtur më parë.")
+        except Exception as e:
+            st.warning(f"Nuk u lexua dot skedari i progresit. Po përdoret skedari origjinal. Gabimi: {e}")
+            df = original_df.copy()
+    else:
+        df = original_df.copy()
+
     st.success(f"U ngarkuan **{len(df)} rreshta** dhe **{len(df.columns)} kolona**")
     st.dataframe(df.head(5), use_container_width=True)
+
+    st.caption(f"Skedari i autosave: `{progress_file}`")
 
     id_col = st.selectbox("Zgjidh kolonën e Response ID", df.columns.tolist(), index=0)
     question_cols = st.multiselect(
@@ -146,7 +235,7 @@ if uploaded_file:
         [c for c in df.columns if c != id_col],
     )
 
-# ── Step 2: Define categories per question ───────────────────────────────────
+# ── Step 2: Define categories per question ──────────────────────────────────
 if df is not None and question_cols:
     st.header("2. Përcakto kategoritë për çdo pyetje")
     st.caption("Shkruaj një kategori për rresht. Modeli gjithashtu do të detektojë tema të reja automatikisht.")
@@ -164,13 +253,15 @@ if df is not None and question_cols:
                 label_visibility="collapsed",
             )
 
-# ── Step 3: Run categorization ────────────────────────────────────────────────
+# ── Step 3: Run categorization ───────────────────────────────────────────────
 if df is not None and question_cols:
     st.header("3. Ekzekuto kategorizimin")
 
     new_cat_threshold = st.slider(
         "Frekuenca minimale për të promovuar një kategori të re",
-        min_value=2, max_value=20, value=3,
+        min_value=2,
+        max_value=20,
+        value=3,
         help="Nëse një etiketë 'NEW: X' shfaqet kaq herë, X shtohet si kategori zyrtare dhe përgjigjet ri-vlerësohen.",
     )
 
@@ -181,13 +272,11 @@ if df is not None and question_cols:
         gemini_model = genai.GenerativeModel(model_name)
         result_df = df.copy()
         token_counts = {"input": 0, "output": 0}
-
-        import time
-
         MAX_RETRIES = 3
 
+        save_progress(result_df, progress_file)
+
         def call_gemini_batch(prompt_text: str) -> tuple[str, int, int]:
-            """Returns (text, input_tokens, output_tokens) with retry."""
             for attempt in range(MAX_RETRIES):
                 try:
                     response = gemini_model.generate_content(
@@ -198,63 +287,91 @@ if df is not None and question_cols:
                         ),
                         request_options={"timeout": 120},
                     )
-                    in_tok = response.usage_metadata.prompt_token_count
-                    out_tok = response.usage_metadata.candidates_token_count
-                    return response.text.strip(), in_tok, out_tok
+
+                    usage = getattr(response, "usage_metadata", None)
+                    in_tok = getattr(usage, "prompt_token_count", 0) if usage else 0
+                    out_tok = getattr(usage, "candidates_token_count", 0) if usage else 0
+
+                    text = getattr(response, "text", "")
+                    if text is None:
+                        text = ""
+
+                    return text.strip(), in_tok, out_tok
+
                 except Exception as e:
                     if attempt < MAX_RETRIES - 1:
                         wait = 2 ** attempt
-                        st.toast(f"Retry {attempt+1}/{MAX_RETRIES} pas {wait}s: {e}")
+                        st.toast(f"Retry {attempt + 1}/{MAX_RETRIES} pas {wait}s: {e}")
                         time.sleep(wait)
                     else:
                         raise e
 
         def parse_batch_response(text: str, expected_count: int) -> list[str]:
-            """Parse numbered lines from model output. Handles multi-word categories."""
             lines = [l.strip() for l in text.strip().splitlines() if l.strip()]
             results = []
+
             for line in lines:
-                # Match lines starting with a number (e.g. "1. Category name here")
                 m = re.match(r"^\d+[\.\)\-:]\s*(.+)$", line)
                 if m:
                     results.append(m.group(1).strip())
                 elif not re.match(r"^\d+$", line):
-                    # Non-numbered, non-empty line — include as-is (fallback)
                     results.append(line.strip())
-            # Pad or truncate to match expected count
+
             while len(results) < expected_count:
                 results.append("Error")
+
             return results[:expected_count]
 
-        def categorize_column(col: str, categories: list[str], responses: pd.Series) -> list[str]:
+        def categorize_column(
+            col: str,
+            categories: list[str],
+            responses: pd.Series,
+            result_df: pd.DataFrame,
+            grouped_col_name: str,
+        ) -> list[str]:
             cats_str = "\n".join(f"- {c}" for c in categories)
-
-            # Pre-fill results: mark nulls/empty as 999 immediately
             results = [""] * len(responses)
             non_empty_indices = []
+
+            if grouped_col_name not in result_df.columns:
+                result_df[grouped_col_name] = ""
+
             for i, resp in enumerate(responses):
+                existing_val = result_df.at[i, grouped_col_name] if grouped_col_name in result_df.columns else ""
+
+                if not is_missing_label(existing_val):
+                    results[i] = str(existing_val).strip()
+                    continue
+
                 if pd.isna(resp) or str(resp).strip() == "":
                     results[i] = "999"
+                    result_df.at[i, grouped_col_name] = "999"
                 else:
                     non_empty_indices.append(i)
+
+            save_progress(result_df, progress_file)
 
             if not non_empty_indices:
                 return results
 
-            # Only send non-empty responses to Gemini in batches
             total_to_process = len(non_empty_indices)
             num_batches = (total_to_process + batch_size - 1) // batch_size
             skipped = len(responses) - total_to_process
-            prog = st.progress(0, text=f"Duke kategorizuar **{col}** ({total_to_process} përgjigje, {skipped} bosh të kapërcyera)…")
+
+            prog = st.progress(
+                0,
+                text=f"Duke kategorizuar **{col}** ({total_to_process} për t'u procesuar, {skipped} të kapërcyera)...",
+            )
 
             for batch_idx in range(num_batches):
                 start = batch_idx * batch_size
                 end = min(start + batch_size, total_to_process)
                 batch_indices = non_empty_indices[start:end]
 
-                numbered_responses = []
-                for j, idx in enumerate(batch_indices):
-                    numbered_responses.append(f"{j+1}. {str(responses.iloc[idx])}")
+                numbered_responses = [
+                    f"{j + 1}. {str(responses.iloc[idx])}"
+                    for j, idx in enumerate(batch_indices)
+                ]
 
                 prompt = st.session_state.prompt_template.format(
                     question_label=col,
@@ -268,58 +385,103 @@ if df is not None and question_cols:
                     token_counts["output"] += out_tok
                     batch_labels = parse_batch_response(text, len(batch_indices))
                 except Exception as e:
-                    st.warning(f"Gabim API në batch {batch_idx+1}: {e}")
+                    st.warning(f"Gabim API në batch {batch_idx + 1}: {e}")
                     batch_labels = ["Error"] * len(batch_indices)
 
-                # Map results back to original positions
                 for j, idx in enumerate(batch_indices):
-                    results[idx] = batch_labels[j]
+                    label = batch_labels[j]
+                    results[idx] = label
+                    result_df.at[idx, grouped_col_name] = label
 
-                prog.progress(end / total_to_process, text=f"Duke kategorizuar **{col}** ({end}/{total_to_process})")
+                save_progress(result_df, progress_file)
+
+                prog.progress(
+                    end / total_to_process,
+                    text=f"Duke kategorizuar **{col}** ({end}/{total_to_process})"
+                )
 
             prog.empty()
             return results
 
         for col in question_cols:
-            base_cats = [c.strip() for c in st.session_state.question_categories[col].splitlines() if c.strip()]
+            base_cats = [
+                c.strip()
+                for c in st.session_state.question_categories[col].splitlines()
+                if c.strip()
+            ]
+            grouped_col = f"{col}_grouped"
 
-            with st.spinner(f"Duke procesuar **{col}**…"):
-                labels = categorize_column(col, base_cats, df[col])
+            with st.spinner(f"Duke procesuar **{col}**..."):
+                labels = categorize_column(
+                    col=col,
+                    categories=base_cats,
+                    responses=result_df[col],
+                    result_df=result_df,
+                    grouped_col_name=grouped_col,
+                )
 
-            # Detect high-frequency NEW categories
-            new_labels = [l for l in labels if l.lower().startswith("new:")]
-            new_counts = Counter(re.sub(r"(?i)^new:\s*", "", l).strip() for l in new_labels)
-            promoted = [cat for cat, cnt in new_counts.items() if cnt >= new_cat_threshold]
+            new_labels = [
+                l for l in labels
+                if isinstance(l, str) and l.lower().startswith("new:")
+            ]
+            new_counts = Counter(
+                re.sub(r"(?i)^new:\s*", "", l).strip()
+                for l in new_labels
+            )
+            promoted = [
+                cat for cat, cnt in new_counts.items()
+                if cnt >= new_cat_threshold
+            ]
 
             if promoted:
-                st.info(f"Kategori të reja të detektuara për **{col}**: {', '.join(promoted)} — duke ri-ekzekutuar me listën e përditësuar…")
+                st.info(
+                    f"Kategori të reja të detektuara për **{col}**: "
+                    f"{', '.join(promoted)} — duke ri-ekzekutuar vetëm rreshtat NEW."
+                )
+
                 updated_cats = base_cats + promoted
-                # Only re-categorize responses that were tagged as NEW:
-                new_indices = [i for i, l in enumerate(labels) if l.lower().startswith("new:")]
+                new_indices = [
+                    i for i, l in enumerate(labels)
+                    if isinstance(l, str) and l.lower().startswith("new:")
+                ]
+
                 if new_indices:
-                    # Build a series with only the NEW-tagged responses, rest as NaN
-                    partial_series = pd.Series([None] * len(df[col]), dtype=object)
+                    partial_series = pd.Series([None] * len(result_df[col]), dtype=object)
+
                     for i in new_indices:
-                        partial_series.iloc[i] = df[col].iloc[i]
-                    partial_labels = categorize_column(col, updated_cats, partial_series)
-                    # Merge: only replace labels that were NEW:
+                        partial_series.iloc[i] = result_df[col].iloc[i]
+                        result_df.at[i, grouped_col] = ""
+
+                    partial_labels = categorize_column(
+                        col=col,
+                        categories=updated_cats,
+                        responses=partial_series,
+                        result_df=result_df,
+                        grouped_col_name=grouped_col,
+                    )
+
                     for i in new_indices:
                         labels[i] = partial_labels[i]
 
-            # Clean up any remaining "NEW: X" labels
-            def clean_label(l):
-                m = re.match(r"(?i)^new:\s*(.+)$", l)
-                return m.group(1).strip() if m else l
+            def clean_label(label):
+                if not isinstance(label, str):
+                    return label
+                m = re.match(r"(?i)^new:\s*(.+)$", label)
+                return m.group(1).strip() if m else label
 
-            result_df[f"{col}_grouped"] = [clean_label(l) for l in labels]
-            st.success(f"Përfundoi: **{col}** → **{col}_grouped**")
+            cleaned_labels = [clean_label(l) for l in labels]
+            result_df[grouped_col] = cleaned_labels
 
-            # Show results immediately after each question
-            grouped_col = f"{col}_grouped"
+            save_progress(result_df, progress_file)
+
+            st.success(f"Përfundoi: **{col}** → **{grouped_col}**")
+
             st.subheader(f"Shpërndarja e kategorive — {col}")
-            dist = result_df[grouped_col].value_counts().reset_index()
+            dist = result_df[grouped_col].value_counts(dropna=False).reset_index()
             dist.columns = ["Kategoria", "Numri"]
-            dist["Përqindja"] = (dist["Numri"] / dist["Numri"].sum() * 100).round(1).astype(str) + "%"
+            dist["Përqindja"] = (
+                (dist["Numri"] / dist["Numri"].sum() * 100).round(1).astype(str) + "%"
+            )
             st.dataframe(dist, use_container_width=True, hide_index=True)
 
             st.dataframe(
@@ -327,8 +489,11 @@ if df is not None and question_cols:
                 use_container_width=True,
             )
 
-        # ── Cost calculation ─────────────────────────────────────────────────
-        total_cost = calculate_gemini_cost(token_counts["input"], token_counts["output"], model_id)
+        total_cost = calculate_gemini_cost(
+            token_counts["input"],
+            token_counts["output"],
+            model_id
+        )
 
         st.markdown("---")
         st.header("Përmbledhje")
@@ -338,13 +503,24 @@ if df is not None and question_cols:
         cost_col2.metric("Output tokens", f"{token_counts['output']:,}")
         cost_col3.metric("Kostoja totale", f"${total_cost:.6f}")
 
-        # Download
+        st.success(f"Progresi u ruajt te: {progress_file}")
+
         output = io.BytesIO()
         result_df.to_excel(output, index=False, engine="openpyxl")
         output.seek(0)
+
         st.download_button(
             label="Shkarko Excel-in e kategorizuar",
             data=output,
             file_name="categorized_responses.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
+
+        if os.path.exists(progress_file):
+            with open(progress_file, "rb") as f:
+                st.download_button(
+                    label="Shkarko versionin me autosave",
+                    data=f.read(),
+                    file_name=os.path.basename(progress_file),
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                )
