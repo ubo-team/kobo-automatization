@@ -54,6 +54,10 @@ GEMINI_PRICING = {
         "inputPer1MTokens":  0.30,
         "outputPer1MTokens": 2.50,
     },
+    "models/gemini-3.1-flash-lite-preview": {
+        "inputPer1MTokens":  0.25,
+        "outputPer1MTokens": 1.50,
+    },
 }
 
 
@@ -84,12 +88,13 @@ Available categories:
 {categories}
 
 Rules:
-1. Choose the single best-matching category from the list above for each response.
-2. If the response clearly represents a NEW, distinct theme that appears frequently (not covered by existing categories), output: NEW: <short category name>
-3. If the response is empty output: 999
-4. If the response is irrelevant, or unclassifiable, output: Other
+1. You MUST choose from the categories listed above. Do NOT invent new category names or rephrase existing ones.
+2. If a response does not clearly fit any category, assign it to "Other".
+3. If the response is empty, output: 999
+4. ONLY use "NEW: <short category name>" if the response represents a genuinely distinct theme that NONE of the existing categories can cover. Be very conservative — prefer "Other" over creating new categories.
 5. The output should be all in English, even if the answers are in other languages.
 6. Output ONLY the category names — no explanation, no punctuation, no extra text.
+7. Use the EXACT category names as listed above (case-sensitive).
 
 Responses (one per line, numbered):
 {responses}
@@ -102,14 +107,20 @@ Output one category per line in the same order (numbered to match), e.g.:
 # ── Session state ─────────────────────────────────────────────────────────────
 if "question_categories" not in st.session_state:
     st.session_state.question_categories = {}
+if "question_labels" not in st.session_state:
+    st.session_state.question_labels = {}
+if "question_followup" not in st.session_state:
+    st.session_state.question_followup = {}
 if "prompt_template" not in st.session_state or "{response}" in st.session_state.prompt_template:
     st.session_state.prompt_template = DEFAULT_PROMPT
+if "results" not in st.session_state:
+    st.session_state.results = None
 
 # ── Settings ─────────────────────────────────────────────────────────────────
 with st.expander("Cilësimet", expanded=False):
     col_model, col_batch = st.columns(2)
     with col_model:
-        model_name = st.selectbox("Model", ["gemini-2.5-flash", "gemini-2.5-pro"], index=0)
+        model_name = st.selectbox("Model", ["gemini-3.1-flash-lite-preview", "gemini-2.5-flash", "gemini-2.5-pro"], index=0)
     with col_batch:
         batch_size = st.number_input("Batch size (rreshta per thirrje)", min_value=5, max_value=100, value=20, step=5)
 
@@ -154,8 +165,49 @@ if df is not None and question_cols:
     for col in question_cols:
         if col not in st.session_state.question_categories:
             st.session_state.question_categories[col] = "Positive\nNegative\nNeutral\nOther"
+        if col not in st.session_state.question_labels:
+            st.session_state.question_labels[col] = col
 
         with st.expander(f"Kategoritë për **{col}**", expanded=True):
+            st.session_state.question_labels[col] = st.text_input(
+                "Etiketa e pyetjes (konteksti për modelin)",
+                value=st.session_state.question_labels[col],
+                key=f"label_{col}",
+                help="Shkruaj pyetjen e plotë që u është bërë të anketuarve, p.sh. 'Çfarë mendoni për shërbimin tonë?'",
+            )
+
+            # Follow-up question toggle
+            other_cols = [c for c in df.columns if c != col and c != id_col]
+            is_followup = st.checkbox(
+                "Kjo pyetje është vazhdim (follow-up) i një pyetjeje tjetër",
+                key=f"followup_check_{col}",
+                value=col in st.session_state.question_followup,
+            )
+            if is_followup and other_cols:
+                default_idx = 0
+                if col in st.session_state.question_followup:
+                    prev = st.session_state.question_followup[col]["column"]
+                    if prev in other_cols:
+                        default_idx = other_cols.index(prev)
+                parent_col = st.selectbox(
+                    "Zgjidh kolonën e pyetjes paraprake",
+                    other_cols,
+                    index=default_idx,
+                    key=f"followup_col_{col}",
+                )
+                parent_label = st.text_input(
+                    "Etiketa e pyetjes paraprake",
+                    value=st.session_state.question_followup.get(col, {}).get("label", parent_col),
+                    key=f"followup_label_{col}",
+                    help="P.sh. 'Which is the most important organization providing safety environment for everyone in Kosovo?'",
+                )
+                st.session_state.question_followup[col] = {
+                    "column": parent_col,
+                    "label": parent_label,
+                }
+            elif col in st.session_state.question_followup:
+                del st.session_state.question_followup[col]
+
             st.session_state.question_categories[col] = st.text_area(
                 f"Categories for {col}",
                 value=st.session_state.question_categories[col],
@@ -168,11 +220,19 @@ if df is not None and question_cols:
 if df is not None and question_cols:
     st.header("3. Ekzekuto kategorizimin")
 
-    new_cat_threshold = st.slider(
-        "Frekuenca minimale për të promovuar një kategori të re",
-        min_value=2, max_value=20, value=3,
-        help="Nëse një etiketë 'NEW: X' shfaqet kaq herë, X shtohet si kategori zyrtare dhe përgjigjet ri-vlerësohen.",
-    )
+    col_thresh, col_maxcat = st.columns(2)
+    with col_thresh:
+        new_cat_threshold = st.slider(
+            "Frekuenca minimale për kategori të re",
+            min_value=2, max_value=20, value=3,
+            help="Nëse një etiketë 'NEW: X' shfaqet kaq herë, X shtohet si kategori zyrtare dhe përgjigjet ri-vlerësohen.",
+        )
+    with col_maxcat:
+        max_categories = st.number_input(
+            "Numri maksimal i kategorive",
+            min_value=5, max_value=50, value=20, step=1,
+            help="Kategoritë me frekuencë të ulët do të bashkohen në 'Other' për të mbajtur numrin brenda kufirit.",
+        )
 
     run_btn = st.button("Kategorizo përgjigjet", type="primary")
 
@@ -252,12 +312,24 @@ if df is not None and question_cols:
                 end = min(start + batch_size, total_to_process)
                 batch_indices = non_empty_indices[start:end]
 
+                followup_info = st.session_state.question_followup.get(col)
                 numbered_responses = []
                 for j, idx in enumerate(batch_indices):
-                    numbered_responses.append(f"{j+1}. {str(responses.iloc[idx])}")
+                    resp_text = str(responses.iloc[idx])
+                    if followup_info:
+                        parent_answer = str(df[followup_info["column"]].iloc[idx])
+                        if pd.isna(df[followup_info["column"]].iloc[idx]) or parent_answer.strip() == "":
+                            parent_answer = "(no answer)"
+                        numbered_responses.append(f"{j+1}. [Previous answer: {parent_answer}] {resp_text}")
+                    else:
+                        numbered_responses.append(f"{j+1}. {resp_text}")
+
+                question_label = st.session_state.question_labels.get(col, col)
+                if followup_info:
+                    question_label = f"{question_label}\n(This is a follow-up to: \"{followup_info['label']}\" — each response includes the respondent's previous answer in [brackets] for context.)"
 
                 prompt = st.session_state.prompt_template.format(
-                    question_label=col,
+                    question_label=question_label,
                     categories=cats_str,
                     responses="\n".join(numbered_responses),
                 )
@@ -311,40 +383,71 @@ if df is not None and question_cols:
                 m = re.match(r"(?i)^new:\s*(.+)$", l)
                 return m.group(1).strip() if m else l
 
-            result_df[f"{col}_grouped"] = [clean_label(l) for l in labels]
-            st.success(f"Përfundoi: **{col}** → **{col}_grouped**")
+            labels = [clean_label(l) for l in labels]
 
-            # Show results immediately after each question
-            grouped_col = f"{col}_grouped"
-            st.subheader(f"Shpërndarja e kategorive — {col}")
-            dist = result_df[grouped_col].value_counts().reset_index()
-            dist.columns = ["Kategoria", "Numri"]
-            dist["Përqindja"] = (dist["Numri"] / dist["Numri"].sum() * 100).round(1).astype(str) + "%"
-            st.dataframe(dist, use_container_width=True, hide_index=True)
+            # Consolidate: keep top (max_categories - 1) categories, merge rest into "Other"
+            label_counts = Counter(l for l in labels if l not in ("999", "Error"))
+            if len(label_counts) > max_categories:
+                top_cats = {cat for cat, _ in label_counts.most_common(max_categories - 1)}
+                merged_count = sum(cnt for cat, cnt in label_counts.items() if cat not in top_cats)
+                st.info(f"**{col}**: {len(label_counts)} kategori u gjetën → duke bashkuar {len(label_counts) - len(top_cats)} kategori me frekuencë të ulët ({merged_count} përgjigje) në 'Other'")
+                labels = [l if l in top_cats or l in ("999", "Error") else "Other" for l in labels]
 
-            st.dataframe(
-                result_df[[id_col, col, grouped_col]].head(20),
-                use_container_width=True,
-            )
+            result_df[f"{col}_grouped"] = labels
 
         # ── Cost calculation ─────────────────────────────────────────────────
         total_cost = calculate_gemini_cost(token_counts["input"], token_counts["output"], model_id)
 
-        st.markdown("---")
-        st.header("Përmbledhje")
-
-        cost_col1, cost_col2, cost_col3 = st.columns(3)
-        cost_col1.metric("Input tokens", f"{token_counts['input']:,}")
-        cost_col2.metric("Output tokens", f"{token_counts['output']:,}")
-        cost_col3.metric("Kostoja totale", f"${total_cost:.6f}")
-
-        # Download
+        # Store results in session state so they persist across reruns
         output = io.BytesIO()
         result_df.to_excel(output, index=False, engine="openpyxl")
         output.seek(0)
-        st.download_button(
-            label="Shkarko Excel-in e kategorizuar",
-            data=output,
-            file_name="categorized_responses.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+
+        cols_suffix = "_".join(question_cols)
+        st.session_state.results = {
+            "result_df": result_df,
+            "question_cols": list(question_cols),
+            "id_col": id_col,
+            "token_counts": dict(token_counts),
+            "total_cost": total_cost,
+            "excel_bytes": output.getvalue(),
+            "file_name": f"categorized_responses_{cols_suffix}.xlsx",
+        }
+        st.rerun()
+
+# ── Display results (persisted in session state) ────────────────────────────
+if st.session_state.results is not None:
+    res = st.session_state.results
+    result_df = res["result_df"]
+
+    st.markdown("---")
+    for col in res["question_cols"]:
+        grouped_col = f"{col}_grouped"
+        if grouped_col not in result_df.columns:
+            continue
+        st.success(f"Përfundoi: **{col}** → **{grouped_col}**")
+        st.subheader(f"Shpërndarja e kategorive — {col}")
+        dist = result_df[grouped_col].value_counts().reset_index()
+        dist.columns = ["Kategoria", "Numri"]
+        dist["Përqindja"] = (dist["Numri"] / dist["Numri"].sum() * 100).round(1).astype(str) + "%"
+        st.dataframe(dist, use_container_width=True, hide_index=True)
+
+        st.dataframe(
+            result_df[[res["id_col"], col, grouped_col]].head(20),
+            use_container_width=True,
         )
+
+    st.markdown("---")
+    st.header("Përmbledhje")
+
+    cost_col1, cost_col2, cost_col3 = st.columns(3)
+    cost_col1.metric("Input tokens", f"{res['token_counts']['input']:,}")
+    cost_col2.metric("Output tokens", f"{res['token_counts']['output']:,}")
+    cost_col3.metric("Kostoja totale", f"${res['total_cost']:.6f}")
+
+    st.download_button(
+        label="Shkarko Excel-in e kategorizuar",
+        data=res["excel_bytes"],
+        file_name=res.get("file_name", "categorized_responses.xlsx"),
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
