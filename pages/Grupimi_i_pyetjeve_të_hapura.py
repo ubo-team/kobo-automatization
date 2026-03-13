@@ -117,7 +117,7 @@ if "results" not in st.session_state:
     st.session_state.results = None
 
 # ── Settings ─────────────────────────────────────────────────────────────────
-with st.expander("Cilësimet", expanded=False):
+with st.expander("Konfigurimet", expanded=False):
     col_model, col_batch = st.columns(2)
     with col_model:
         model_name = st.selectbox("Model", ["gemini-3.1-flash-lite-preview", "gemini-2.5-flash", "gemini-2.5-pro"], index=0)
