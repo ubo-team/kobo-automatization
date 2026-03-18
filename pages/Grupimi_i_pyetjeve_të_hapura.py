@@ -208,11 +208,57 @@ if df is not None and question_cols:
             elif col in st.session_state.question_followup:
                 del st.session_state.question_followup[col]
 
+            # Suggest categories button
+            if st.button("Sugjero kategoritë me AI", key=f"suggest_{col}"):
+                with st.spinner("Duke analizuar përgjigjet…"):
+                    sample_responses = df[col].dropna().astype(str)
+                    sample_responses = sample_responses[sample_responses.str.strip() != ""]
+                    sample = sample_responses.sample(min(50, len(sample_responses)), random_state=42).tolist()
+                    numbered = "\n".join(f"{i+1}. {r}" for i, r in enumerate(sample))
+
+                    q_label = st.session_state.question_labels.get(col, col)
+                    suggest_prompt = f"""You are a survey analyst. Based on the question and a sample of responses below, suggest between 5 and 15 meaningful categories that cover the main themes in the responses.
+
+Question: {q_label}
+
+Sample responses:
+{numbered}
+
+Rules:
+1. Output one category name per line, nothing else.
+2. Categories should be short (2-5 words), in English.
+3. Include "Other" as the last category for responses that don't fit.
+4. Be specific — avoid generic labels like "Positive" or "Negative" unless the responses are clearly sentiment-based.
+5. Aim to cover at least 80% of the sample responses with your categories."""
+
+                    try:
+                        suggest_model = genai.GenerativeModel(model_name)
+                        resp = suggest_model.generate_content(
+                            suggest_prompt,
+                            generation_config=genai.types.GenerationConfig(temperature=0.3, max_output_tokens=1024),
+                        )
+                        suggested = resp.text.strip()
+                        # Clean numbered prefixes if model adds them
+                        lines = []
+                        for line in suggested.splitlines():
+                            line = line.strip()
+                            if line:
+                                m = re.match(r"^\d+[\.\)\-:]\s*(.+)$", line)
+                                lines.append(m.group(1).strip() if m else line)
+                        suggested_cats = "\n".join(lines)
+                        st.session_state.question_categories[col] = suggested_cats
+                        st.session_state[f"cats_{col}"] = suggested_cats
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Gabim: {e}")
+
+            cats_key = f"cats_{col}"
+            if cats_key not in st.session_state:
+                st.session_state[cats_key] = st.session_state.question_categories[col]
             st.session_state.question_categories[col] = st.text_area(
                 f"Categories for {col}",
-                value=st.session_state.question_categories[col],
                 height=140,
-                key=f"cats_{col}",
+                key=cats_key,
                 label_visibility="collapsed",
             )
 
