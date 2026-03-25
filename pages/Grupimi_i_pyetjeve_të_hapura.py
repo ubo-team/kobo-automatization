@@ -431,6 +431,25 @@ if df is not None and question_cols:
 
             labels = [clean_label(l) for l in labels]
 
+            # Normalize categories: strip trailing punctuation, then merge duplicates
+            # e.g. "Electricity." → "Electricity", deduped against "Electricity"
+            def normalize_label(l):
+                if l in ("999", "Error"):
+                    return l
+                return l.rstrip(".")
+
+            labels = [normalize_label(l) for l in labels]
+
+            # Build a canonical mapping: for each lowercased name, keep the first seen form
+            canonical = {}
+            for l in labels:
+                if l in ("999", "Error"):
+                    continue
+                key = l.lower()
+                if key not in canonical:
+                    canonical[key] = l
+            labels = [canonical.get(l.lower(), l) if l not in ("999", "Error") else l for l in labels]
+
             # Consolidate: keep top (max_categories - 1) categories, merge rest into "Other"
             label_counts = Counter(l for l in labels if l not in ("999", "Error"))
             if len(label_counts) > max_categories:
