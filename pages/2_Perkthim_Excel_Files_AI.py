@@ -120,7 +120,8 @@ def translate_text(text, from_lang, to_lang):
         out_tok = getattr(response.usage_metadata, "candidates_token_count", 0) or 0
         translated_text = response.text.strip()
         return code + translated_text, in_tok, out_tok
-    except Exception:
+    except Exception as e:
+        st.warning(f"Gabim gjatë përkthimit: {e}")
         return text, 0, 0
 
 
