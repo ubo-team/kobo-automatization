@@ -94,7 +94,6 @@ gemini_model = genai.GenerativeModel(MODEL_NAME)
 
 
 BATCH_SIZE = 20
-RATE_LIMIT_DELAY = 13  # seconds between API calls (free tier: 5 req/min)
 
 
 def translate_dataframe(df, source_col, target_col, from_lang, to_lang):
@@ -158,9 +157,6 @@ def translate_dataframe(df, source_col, target_col, from_lang, to_lang):
         done = min(batch_start + BATCH_SIZE, len(to_translate))
         pct = done / len(to_translate)
         progress.progress(pct, text=f"Duke përkthyer... {done}/{len(to_translate)}")
-
-        if batch_start + BATCH_SIZE < len(to_translate):
-            time.sleep(RATE_LIMIT_DELAY)
 
     progress.empty()
     df[target_col] = results

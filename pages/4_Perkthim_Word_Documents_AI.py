@@ -72,7 +72,6 @@ gemini_model = genai.GenerativeModel(MODEL_NAME)
 
 
 BATCH_SIZE = 20
-RATE_LIMIT_DELAY = 13  # seconds between API calls (free tier: 5 req/min)
 
 
 def translate_batch(texts, from_lang, to_lang):
@@ -148,9 +147,6 @@ def translate_docx_in_place(doc, from_lang, to_lang):
         done = min(batch_start + BATCH_SIZE, len(run_entries))
         pct = done / len(run_entries)
         progress.progress(pct, text=f"Duke përkthyer... {done}/{len(run_entries)}")
-
-        if batch_start + BATCH_SIZE < len(run_entries):
-            time.sleep(RATE_LIMIT_DELAY)
 
     progress.empty()
     return doc, total_in, total_out, errors
