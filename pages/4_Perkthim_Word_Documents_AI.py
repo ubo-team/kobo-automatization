@@ -62,16 +62,16 @@ LANGUAGE_OPTIONS_UI = {
 LANG_NAMES = {
     "sq": "Albanian",
     "en": "English",
-    "sr": "Serbian",
-    "mk": "Macedonian",
+    "sr": "Serbian (Latin script)",
+    "mk": "Macedonian (Latin script)",
     "bs": "Bosnian"
 }
 
-MODEL_NAME = "gemini-2.5-flash"
+MODEL_NAME = "gemini-3.1-flash-lite-preview"
 gemini_model = genai.GenerativeModel(MODEL_NAME)
 
 
-BATCH_SIZE = 20
+BATCH_SIZE = 50
 
 
 def translate_batch(texts, from_lang, to_lang):
@@ -81,9 +81,7 @@ def translate_batch(texts, from_lang, to_lang):
 
     numbered_texts = "\n".join(f"[{j+1}] {t}" for j, t in enumerate(texts))
     prompt = (
-        f"Translate each numbered text from {from_name} to {to_name}. "
-        f"Return ONLY the translations in the exact format [N] translated text. "
-        f"Keep the same numbering.\n\n{numbered_texts}"
+        f"{from_name} to {to_name}. Reply [N] translation only.\n\n{numbered_texts}"
     )
 
     response = gemini_model.generate_content(
