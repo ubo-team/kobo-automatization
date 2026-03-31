@@ -3,6 +3,7 @@ import streamlit as st
 from io import BytesIO
 import re
 import os
+import time
 import google.generativeai as genai
 
 
@@ -92,52 +93,76 @@ MODEL_NAME = "gemini-2.5-flash"
 gemini_model = genai.GenerativeModel(MODEL_NAME)
 
 
-def translate_text(text, from_lang, to_lang, errors):
-    """Returns (translated_text, input_tokens, output_tokens)."""
-    if pd.isna(text) or not str(text).strip():
-        return text, 0, 0
-
-    text_str = str(text).strip()
-    if text_str.lower() == "none":
-        return text, 0, 0
-
-    code, remaining_text = adjust_question_code(text, from_lang, to_lang)
-
-    if not remaining_text.strip():
-        return code + remaining_text, 0, 0
-
-    from_name = LANG_NAMES.get(from_lang, from_lang)
-    to_name = LANG_NAMES.get(to_lang, to_lang)
-
-    prompt = (
-        f"Translate the following text from {from_name} to {to_name}. "
-        f"Return ONLY the translated text, nothing else.\n\n"
-        f"{remaining_text}"
-    )
-
-    try:
-        response = gemini_model.generate_content(
-            prompt,
-            generation_config=genai.types.GenerationConfig(temperature=0.1, max_output_tokens=1024),
-        )
-        in_tok = getattr(response.usage_metadata, "prompt_token_count", 0) or 0
-        out_tok = getattr(response.usage_metadata, "candidates_token_count", 0) or 0
-        translated_text = response.text.strip()
-        return code + translated_text, in_tok, out_tok
-    except Exception as e:
-        errors.append(str(e))
-        return text, 0, 0
+BATCH_SIZE = 20
+RATE_LIMIT_DELAY = 13  # seconds between API calls (free tier: 5 req/min)
 
 
 def translate_dataframe(df, source_col, target_col, from_lang, to_lang):
     total_in, total_out = 0, 0
     errors = []
-    results = []
-    for val in df[source_col]:
-        translated, in_tok, out_tok = translate_text(val, from_lang, to_lang, errors)
-        results.append(translated)
-        total_in += in_tok
-        total_out += out_tok
+    results = list(df[source_col].values)
+
+    # Collect texts that need translation
+    to_translate = []
+    for i, val in enumerate(results):
+        if pd.isna(val) or not str(val).strip() or str(val).strip().lower() == "none":
+            continue
+        code, remaining = adjust_question_code(str(val), from_lang, to_lang)
+        if not remaining.strip():
+            results[i] = code + remaining
+            continue
+        to_translate.append((i, code, remaining.strip()))
+
+    if not to_translate:
+        df[target_col] = results
+        return df, 0, 0, []
+
+    from_name = LANG_NAMES.get(from_lang, from_lang)
+    to_name = LANG_NAMES.get(to_lang, to_lang)
+
+    progress = st.progress(0, text="Duke përkthyer... 0%")
+
+    for batch_start in range(0, len(to_translate), BATCH_SIZE):
+        batch = to_translate[batch_start:batch_start + BATCH_SIZE]
+        texts = [text for _, _, text in batch]
+
+        numbered_texts = "\n".join(f"[{j+1}] {t}" for j, t in enumerate(texts))
+        prompt = (
+            f"Translate each numbered text from {from_name} to {to_name}. "
+            f"Return ONLY the translations in the exact format [N] translated text. "
+            f"Keep the same numbering.\n\n{numbered_texts}"
+        )
+
+        try:
+            response = gemini_model.generate_content(
+                prompt,
+                generation_config=genai.types.GenerationConfig(temperature=0.1, max_output_tokens=4096),
+            )
+            in_tok = getattr(response.usage_metadata, "prompt_token_count", 0) or 0
+            out_tok = getattr(response.usage_metadata, "candidates_token_count", 0) or 0
+            total_in += in_tok
+            total_out += out_tok
+
+            translations = {}
+            for line in response.text.strip().split("\n"):
+                m = re.match(r"\[(\d+)\]\s*(.*)", line.strip())
+                if m:
+                    translations[int(m.group(1))] = m.group(2).strip()
+
+            for j, (idx, code, _) in enumerate(batch):
+                if (j + 1) in translations:
+                    results[idx] = code + translations[j + 1]
+        except Exception as e:
+            errors.append(str(e))
+
+        done = min(batch_start + BATCH_SIZE, len(to_translate))
+        pct = done / len(to_translate)
+        progress.progress(pct, text=f"Duke përkthyer... {done}/{len(to_translate)}")
+
+        if batch_start + BATCH_SIZE < len(to_translate):
+            time.sleep(RATE_LIMIT_DELAY)
+
+    progress.empty()
     df[target_col] = results
     return df, total_in, total_out, errors
 
