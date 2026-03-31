@@ -1,9 +1,9 @@
 import pandas as pd
-import requests
 import streamlit as st
 from io import BytesIO
 import re
 import os
+import google.generativeai as genai
 
 
 
@@ -33,9 +33,28 @@ with st.sidebar:
         </style>
     """, unsafe_allow_html=True)
     
-AZURE_TRANSLATOR_KEY = st.secrets["AZURE_TRANSLATOR_KEY"]
-AZURE_TRANSLATOR_ENDPOINT = st.secrets["AZURE_TRANSLATOR_ENDPOINT"]
-AZURE_TRANSLATOR_REGION = st.secrets["AZURE_TRANSLATOR_REGION"]
+GEMINI_TRANSLATION_API_KEY = st.secrets["GEMINI_TRANSLATION_API_KEY"]
+genai.configure(api_key=GEMINI_TRANSLATION_API_KEY)
+
+GEMINI_PRICING = {
+    "models/gemini-2.5-flash": {
+        "inputPer1MTokens":  0.30,
+        "outputPer1MTokens": 2.50,
+    },
+    "models/gemini-3.1-flash-lite-preview": {
+        "inputPer1MTokens":  0.25,
+        "outputPer1MTokens": 1.50,
+    },
+}
+
+
+def calculate_gemini_cost(prompt_tokens: int, completion_tokens: int, model: str) -> float:
+    pricing = GEMINI_PRICING.get(model, GEMINI_PRICING["models/gemini-2.5-flash"])
+    input_rate  = pricing["inputPer1MTokens"]
+    output_rate = pricing["outputPer1MTokens"]
+    input_cost  = ((prompt_tokens     or 0) / 1_000_000) * input_rate
+    output_cost = ((completion_tokens or 0) / 1_000_000) * output_rate
+    return input_cost + output_cost
 
 LANGUAGE_OPTIONS_UI = {
     "Gjuha Shqipe": "sq",
@@ -61,39 +80,60 @@ def adjust_question_code(text, from_lang, to_lang):
     else:
         return '', text
 
+LANG_NAMES = {
+    "sq": "Albanian",
+    "en": "English",
+    "sr": "Serbian",
+    "mk": "Macedonian",
+    "bs": "Bosnian"
+}
+
+MODEL_NAME = "gemini-2.5-flash"
+gemini_model = genai.GenerativeModel(MODEL_NAME)
+
+
 def translate_text(text, from_lang, to_lang):
+    """Returns (translated_text, input_tokens, output_tokens)."""
     if pd.isna(text) or not str(text).strip():
-        return text
+        return text, 0, 0
 
     code, remaining_text = adjust_question_code(text, from_lang, to_lang)
 
-    path = "/translate?api-version=3.0"
-    params = f"&from={from_lang}&to={to_lang}"
-    url = AZURE_TRANSLATOR_ENDPOINT + path + params
+    if not remaining_text.strip():
+        return code + remaining_text, 0, 0
 
-    headers = {
-        'Ocp-Apim-Subscription-Key': AZURE_TRANSLATOR_KEY,
-        'Ocp-Apim-Subscription-Region': AZURE_TRANSLATOR_REGION,
-        'Content-type': 'application/json'
-    }
+    from_name = LANG_NAMES.get(from_lang, from_lang)
+    to_name = LANG_NAMES.get(to_lang, to_lang)
 
-    body = [{"text": str(remaining_text)}]
-    response = requests.post(url, headers=headers, json=body)
-
-    if response.status_code != 200:
-        return text
-
-    result = response.json()
+    prompt = (
+        f"Translate the following text from {from_name} to {to_name}. "
+        f"Return ONLY the translated text, nothing else.\n\n"
+        f"{remaining_text}"
+    )
 
     try:
-        translated_text = result[0]["translations"][0]["text"]
-        return code + translated_text
-    except (KeyError, IndexError, TypeError):
-        return text
+        response = gemini_model.generate_content(
+            prompt,
+            generation_config=genai.types.GenerationConfig(temperature=0.1, max_output_tokens=1024),
+        )
+        in_tok = getattr(response.usage_metadata, "prompt_token_count", 0) or 0
+        out_tok = getattr(response.usage_metadata, "candidates_token_count", 0) or 0
+        translated_text = response.text.strip()
+        return code + translated_text, in_tok, out_tok
+    except Exception:
+        return text, 0, 0
+
 
 def translate_dataframe(df, source_col, target_col, from_lang, to_lang):
-    df[target_col] = df[source_col].apply(lambda x: translate_text(x, from_lang, to_lang))
-    return df
+    total_in, total_out = 0, 0
+    results = []
+    for val in df[source_col]:
+        translated, in_tok, out_tok = translate_text(val, from_lang, to_lang)
+        results.append(translated)
+        total_in += in_tok
+        total_out += out_tok
+    df[target_col] = results
+    return df, total_in, total_out
 
 st.title("Fillo me Përkthimin e Pyetësorëve")
 
@@ -133,13 +173,24 @@ if uploaded_file:
             target_languages.append((target_col, LANGUAGE_OPTIONS_UI[lang_label]))
 
         if st.button(f"Fillo Përkthimin për {selected_sheet} (Blloku {block_id + 1})", key=f"translate_btn_{block_id}"):
+            block_in_tokens, block_out_tokens = 0, 0
             with st.spinner("Duke përkthyer... Ju lutemi prisni"):
                 for target_col, to_lang in target_languages:
-                    df = translate_dataframe(df, source_col, target_col, from_lang=from_lang, to_lang=to_lang)
+                    df, in_tok, out_tok = translate_dataframe(df, source_col, target_col, from_lang=from_lang, to_lang=to_lang)
+                    block_in_tokens += in_tok
+                    block_out_tokens += out_tok
 
             st.session_state.translated_sheets[selected_sheet] = df.copy()
             st.success(f"Përkthimi për {selected_sheet} u krye me sukses në Bllokun {block_id + 1}!")
             st.write(df.head())
+
+            model_id = f"models/{MODEL_NAME}"
+            block_cost = calculate_gemini_cost(block_in_tokens, block_out_tokens, model_id)
+            st.info(
+                f"**Kostoja e Bllokut {block_id + 1}:**  \n"
+                f"Input tokens: **{block_in_tokens:,}** | Output tokens: **{block_out_tokens:,}**  \n"
+                f"Kostoja: **${block_cost:.4f}**"
+            )
 
         if block_id == len(st.session_state.translation_blocks) - 1:
             add_block = st.button("Shto bllok përkthimi të ri", key=f"add_block_{block_id}")
