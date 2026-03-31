@@ -92,9 +92,13 @@ MODEL_NAME = "gemini-2.5-flash"
 gemini_model = genai.GenerativeModel(MODEL_NAME)
 
 
-def translate_text(text, from_lang, to_lang):
+def translate_text(text, from_lang, to_lang, errors):
     """Returns (translated_text, input_tokens, output_tokens)."""
     if pd.isna(text) or not str(text).strip():
+        return text, 0, 0
+
+    text_str = str(text).strip()
+    if text_str.lower() == "none":
         return text, 0, 0
 
     code, remaining_text = adjust_question_code(text, from_lang, to_lang)
@@ -121,22 +125,31 @@ def translate_text(text, from_lang, to_lang):
         translated_text = response.text.strip()
         return code + translated_text, in_tok, out_tok
     except Exception as e:
-        st.warning(f"Gabim gjatë përkthimit: {e}")
+        errors.append(str(e))
         return text, 0, 0
 
 
 def translate_dataframe(df, source_col, target_col, from_lang, to_lang):
     total_in, total_out = 0, 0
+    errors = []
     results = []
     for val in df[source_col]:
-        translated, in_tok, out_tok = translate_text(val, from_lang, to_lang)
+        translated, in_tok, out_tok = translate_text(val, from_lang, to_lang, errors)
         results.append(translated)
         total_in += in_tok
         total_out += out_tok
     df[target_col] = results
-    return df, total_in, total_out
+    return df, total_in, total_out, errors
 
 st.title("Fillo me Përkthimin e Pyetësorëve")
+
+with st.expander("Testo API Key"):
+    if st.button("Testo Gemini API"):
+        try:
+            test_response = gemini_model.generate_content("Translate 'Hello' to Albanian. Return ONLY the translation.")
+            st.success(f"API funksionon! Pergjigja: {test_response.text.strip()}")
+        except Exception as e:
+            st.error(f"API nuk funksionon: {e}")
 
 uploaded_file = st.file_uploader("Ngarko Excel-in", type=["xlsx"])
 
@@ -175,14 +188,20 @@ if uploaded_file:
 
         if st.button(f"Fillo Përkthimin për {selected_sheet} (Blloku {block_id + 1})", key=f"translate_btn_{block_id}"):
             block_in_tokens, block_out_tokens = 0, 0
+            all_errors = []
             with st.spinner("Duke përkthyer... Ju lutemi prisni"):
                 for target_col, to_lang in target_languages:
-                    df, in_tok, out_tok = translate_dataframe(df, source_col, target_col, from_lang=from_lang, to_lang=to_lang)
+                    df, in_tok, out_tok, errors = translate_dataframe(df, source_col, target_col, from_lang=from_lang, to_lang=to_lang)
                     block_in_tokens += in_tok
                     block_out_tokens += out_tok
+                    all_errors.extend(errors)
 
-            st.session_state.translated_sheets[selected_sheet] = df.copy()
-            st.success(f"Përkthimi për {selected_sheet} u krye me sukses në Bllokun {block_id + 1}!")
+            if all_errors:
+                st.error(f"Ka pasur {len(all_errors)} gabime. Gabimi i parë: {all_errors[0]}")
+            else:
+                st.session_state.translated_sheets[selected_sheet] = df.copy()
+                st.success(f"Përkthimi për {selected_sheet} u krye me sukses në Bllokun {block_id + 1}!")
+
             st.write(df.head())
 
             model_id = f"models/{MODEL_NAME}"
