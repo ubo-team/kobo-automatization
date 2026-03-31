@@ -214,12 +214,11 @@ if uploaded_file:
         if st.button(f"Fillo Përkthimin për {selected_sheet} (Blloku {block_id + 1})", key=f"translate_btn_{block_id}"):
             block_in_tokens, block_out_tokens = 0, 0
             all_errors = []
-            with st.spinner("Duke përkthyer... Ju lutemi prisni"):
-                for target_col, to_lang in target_languages:
-                    df, in_tok, out_tok, errors = translate_dataframe(df, source_col, target_col, from_lang=from_lang, to_lang=to_lang)
-                    block_in_tokens += in_tok
-                    block_out_tokens += out_tok
-                    all_errors.extend(errors)
+            for target_col, to_lang in target_languages:
+                df, in_tok, out_tok, errors = translate_dataframe(df, source_col, target_col, from_lang=from_lang, to_lang=to_lang)
+                block_in_tokens += in_tok
+                block_out_tokens += out_tok
+                all_errors.extend(errors)
 
             if all_errors:
                 st.error(f"Ka pasur {len(all_errors)} gabime. Gabimi i parë: {all_errors[0]}")

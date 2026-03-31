@@ -175,13 +175,12 @@ if uploaded_file:
     to_lang = LANGUAGE_OPTIONS_UI[to_lang_label]
 
     if st.button("Përkthe Word Dokumentin"):
-        with st.spinner("Duke përkthyer dokumentin..."):
-            doc = Document(uploaded_file)
-            translated_doc, total_in, total_out, errors = translate_docx_in_place(doc, from_lang, to_lang)
+        doc = Document(uploaded_file)
+        translated_doc, total_in, total_out, errors = translate_docx_in_place(doc, from_lang, to_lang)
 
-            output = BytesIO()
-            translated_doc.save(output)
-            output.seek(0)
+        output = BytesIO()
+        translated_doc.save(output)
+        output.seek(0)
 
         if errors:
             st.error(f"Ka pasur {len(errors)} gabime. Gabimi i parë: {errors[0]}")
