@@ -142,6 +142,9 @@ elif mode == "Ngarko XLSForm":
         settings_df.columns = settings_df.columns.str.strip()
 
         label_columns = [col for col in survey_df.columns if col.startswith("label::")]
+        if not label_columns:
+            st.error("XLSForm nuk ka kolona 'label::'. Sigurohu që Exceli ka kolona si 'label::Albanian (1)', 'label::Serbian (2)', etj.")
+            st.stop()
         from_label = st.selectbox("Zgjidh kolonën në Excel prej nga do të përkthehet:", label_columns).strip()
         to_label = st.selectbox("Zgjidh kolonën në Excel ku do të vendoset përkthimi:", label_columns).strip()
 
@@ -177,9 +180,6 @@ elif mode == "Ngarko XLSForm":
 
         def capitalize_first(text):
             return text[0].upper() + text[1:] if text else text
-
-        question_translations = translated_df[translated_df["Option ID"].isna()].set_index("Question ID")["Question Text"].to_dict()
-        option_translations = translated_df[translated_df["Option ID"].notna()].set_index("Option ID")["Option Text"].to_dict()
 
         def build_translation_dictionaries():
             manual_al_to_sr, manual_sr_to_al = {}, {}
@@ -390,73 +390,117 @@ elif mode == "Ngarko XLSForm":
                 unmatched_terms.append(text)
             return ""
 
-        def map_name_to_qid(name):
-            if pd.isna(name): return None
-            name = str(name).strip().lower()
-            if re.match(r"^p\d+_\d+$", name): return f"Q{name[1:]}"
-            if re.match(r"^p\d+$", name): return f"Q{name[1:]}"
-            return None
+        # ── Extract question code from label text (e.g., "S1. Consent" → "s1") ──
+        CODE_PATTERN = re.compile(r"^([A-Za-z]+\d+[a-zA-Z]?)[\.\)\:\s]")
 
-        def guess_qid_from_label(label_text):
-            label_text = clean_label(label_text)
-            match = re.match(r"(\d+(\.\d+)?)", label_text)
-            return f"Q{match.group(1).replace('.', '_')}" if match else None
-        
+        def extract_code(text):
+            if pd.isna(text) or not str(text).strip():
+                return None
+            m = CODE_PATTERN.match(str(text).strip())
+            return m.group(1).lower() if m else None
+
+        # ── Build code-based translation maps from Word extraction ──
+        question_translations = {}  # code → translated text
+        hint_translations = {}      # code → hint text
+        option_translations = {}    # (parent_code, option_pos) → translated text
+
+        current_q_code = None
+        option_counter = 0
+        for _, row in translated_df.iterrows():
+            qtext = row.get("Question Text")
+            otext = row.get("Option Text")
+            hint = row.get("hint", "")
+            is_option = pd.notna(row.get("Option ID"))
+
+            if not is_option and pd.notna(qtext) and str(qtext).strip():
+                code = extract_code(qtext)
+                if code:
+                    current_q_code = code
+                    option_counter = 0
+                    question_translations[code] = str(qtext).strip()
+                    if pd.notna(hint) and str(hint).strip():
+                        hint_translations[code] = str(hint).strip()
+            elif is_option and pd.notna(otext) and str(otext).strip() and current_q_code:
+                option_counter += 1
+                option_translations[(current_q_code, option_counter)] = str(otext).strip()
+
+        # ── Match survey questions by code ──
+        def get_survey_code(row):
+            label_text = row.get(from_label, "")
+            return extract_code(label_text)
+
+        matched_q, total_q, unmatched_q = 0, 0, []
+
+        # ── Merge hints ──
         if to_hint_col and "hint" in translated_df.columns:
-            hints_map = translated_df[["Question ID", "hint"]].dropna().set_index("Question ID")["hint"].to_dict()
-
             def merge_hints(row):
-                qid = map_name_to_qid(row.get("name")) or guess_qid_from_label(row.get(from_label))
-                if qid and qid in hints_map:
-                    return hints_map[qid]
+                code = get_survey_code(row)
+                if code and code in hint_translations:
+                    return hint_translations[code]
                 return row.get(to_hint_col, "")
-
             survey_df[to_hint_col] = survey_df.apply(merge_hints, axis=1)
-        else:
-            st.warning("Kolona 'hint' nuk u gjet në dokumentin e ngarkuar të përkthyer.")
 
-        def get_question_id(row):
-            return map_name_to_qid(row.get("name")) or guess_qid_from_label(row.get(from_label))
-
+        # ── Translate survey questions ──
         def translate_question_auto(row):
-            if isinstance(row.get("type"), str) and row["type"].lower().startswith("begin_group"):
+            nonlocal matched_q, total_q
+            row_type = str(row.get("type", "")).strip().lower()
+            if row_type.startswith("begin_group") or row_type.startswith("end_group"):
                 return row.get(from_label, "")
-            qid = get_question_id(row)
-            if qid and qid in question_translations:
-                return capitalize_first(question_translations[qid])
-            return ""
+            if row_type.startswith("note"):
+                return row.get(from_label, "")
+
+            code = get_survey_code(row)
+            if code:
+                total_q += 1
+                if code in question_translations:
+                    matched_q += 1
+                    return capitalize_first(question_translations[code])
+                else:
+                    unmatched_q.append(f"{code}: {str(row.get(from_label, ''))[:50]}")
+
+            # Fallback to manual dictionary
+            return apply_manual(row.get(from_label, ""))
 
         survey_df[to_label] = survey_df.apply(translate_question_auto, axis=1)
-        survey_df[to_label] = survey_df[to_label].where(survey_df[to_label] != "", survey_df[from_label].apply(apply_manual))
 
-        list_qid_map = defaultdict(list)
+        st.caption(f"Pyetje të gjetura: {matched_q}/{total_q} (Word ka {len(question_translations)} pyetje)")
+        if unmatched_q:
+            with st.expander(f"{len(unmatched_q)} pyetje pa përkthim"):
+                for item in unmatched_q:
+                    st.text(item)
+
+        # ── Translate choices by matching parent question code + option position ──
+        # Build: list_name → question code
+        list_code_map = {}
         for _, row in survey_df.iterrows():
-            if isinstance(row.get("type"), str) and ("select_one" in row["type"] or "select_multiple" in row["type"]):
-                qid = get_question_id(row)
-                if qid:
-                    list_qid_map[row["type"].split()[1]].append(qid)
+            row_type = str(row.get("type", "")).strip().lower()
+            if "select_one" in row_type or "select_multiple" in row_type:
+                code = get_survey_code(row)
+                if code:
+                    list_name = row_type.split()[1] if len(row_type.split()) > 1 else None
+                    if list_name:
+                        list_code_map[list_name] = code
 
-        def build_option_id(row):
-            list_name, raw_name = row.get("list_name"), row.get("name")
-            qids = list_qid_map.get(list_name)
-            if pd.isna(raw_name) or not qids: return None
-            match = re.search(r"(\d+)", str(raw_name))
-            if not match: return None
-            num = match.group(1)
-            for qid in qids:
-                candidate = f"{qid}_option_{num}"
-                if candidate in option_translations: return candidate
-            return None
+        choices_df["_option_pos"] = choices_df.groupby("list_name").cumcount() + 1
 
-        choices_df["Option ID"] = choices_df.apply(build_option_id, axis=1)
+        def translate_choice(row):
+            list_name = row.get("list_name")
+            pos = row.get("_option_pos")
+            parent_code = list_code_map.get(list_name)
+            if parent_code and pd.notna(pos):
+                key = (parent_code, int(pos))
+                if key in option_translations:
+                    return capitalize_first(option_translations[key])
+            # Fallback to manual dictionary
+            return apply_manual(row.get(from_label, ""))
 
         if from_label in choices_df.columns and to_label in choices_df.columns:
-            choices_df[to_label] = choices_df["Option ID"].map(option_translations).fillna("")
-            choices_df[to_label] = choices_df[to_label].where(choices_df[to_label] != "", choices_df[from_label].apply(apply_manual))
+            choices_df[to_label] = choices_df.apply(translate_choice, axis=1)
         else:
-            st.warning(f"Kolona '{from_label}' ose '{to_label}' nuk ekziston në fletën 'choices'. U anashkalua përkthimi i choices.")
+            st.warning(f"Kolona '{from_label}' ose '{to_label}' nuk ekziston në fletën 'choices'.")
 
-        choices_df.drop(columns=["Option ID"], inplace=True)
+        # ── Clean up temp columns ──
+        choices_df.drop(columns=["_option_pos"], inplace=True)
 
         output_file = "translated_output.xlsx"
         with pd.ExcelWriter(output_file, engine="openpyxl") as writer:
