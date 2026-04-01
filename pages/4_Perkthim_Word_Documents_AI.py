@@ -104,61 +104,59 @@ def translate_docx_in_place(doc, from_lang, to_lang):
     total_in, total_out = 0, 0
     errors = []
 
-    # Collect all translatable runs with their references
-    run_entries = []  # (run_reference, original_text)
+    # Collect full paragraph text (not individual runs) for better translation
+    # Each entry: (paragraph, full_text)
+    para_entries = []
 
     for para in doc.paragraphs:
-        for run in para.runs:
-            text = run.text.strip()
-            if text:
-                run_entries.append((run, text))
+        text = para.text.strip()
+        if text:
+            para_entries.append(("para", para, text))
 
     for table in doc.tables:
         for row in table.rows:
             for cell in row.cells:
                 for para in cell.paragraphs:
-                    for run in para.runs:
-                        text = run.text.strip()
-                        if text:
-                            run_entries.append((run, text))
+                    text = para.text.strip()
+                    if text:
+                        para_entries.append(("cell", para, text))
 
-    if not run_entries:
+    if not para_entries:
         return doc, 0, 0, []
 
     progress = st.progress(0, text="Duke përkthyer... 0%")
 
-    for batch_start in range(0, len(run_entries), BATCH_SIZE):
-        batch = run_entries[batch_start:batch_start + BATCH_SIZE]
-        texts = [text for _, text in batch]
+    for batch_start in range(0, len(para_entries), BATCH_SIZE):
+        batch = para_entries[batch_start:batch_start + BATCH_SIZE]
+        texts = [text for _, _, text in batch]
 
         try:
             translations, in_tok, out_tok = translate_batch(texts, from_lang, to_lang)
             total_in += in_tok
             total_out += out_tok
 
-            for j, (run, _) in enumerate(batch):
+            for j, (_, para, _) in enumerate(batch):
                 if (j + 1) in translations:
-                    run.text = translations[j + 1]
+                    translated = translations[j + 1]
+                    # Put all translated text in first run, clear the rest
+                    if para.runs:
+                        para.runs[0].text = translated
+                        for run in para.runs[1:]:
+                            run.text = ""
+                    else:
+                        para.text = translated
         except Exception as e:
             errors.append(str(e))
 
-        done = min(batch_start + BATCH_SIZE, len(run_entries))
-        pct = done / len(run_entries)
-        progress.progress(pct, text=f"Duke përkthyer... {done}/{len(run_entries)}")
+        done = min(batch_start + BATCH_SIZE, len(para_entries))
+        pct = done / len(para_entries)
+        progress.progress(pct, text=f"Duke përkthyer... {done}/{len(para_entries)}")
 
     progress.empty()
     return doc, total_in, total_out, errors
 
 
 st.title("Fillo me Përkthimin e Pyetësorëve")
-
-with st.expander("Testo API Key"):
-    if st.button("Testo Gemini API"):
-        try:
-            test_response = gemini_model.generate_content("Translate 'Hello' to Albanian. Return ONLY the translation.")
-            st.success(f"API funksionon! Pergjigja: {test_response.text.strip()}")
-        except Exception as e:
-            st.error(f"API nuk funksionon: {e}")
 
 uploaded_file = st.file_uploader("Ngarko dokumentin (vetëm Word)", type=["docx"])
 

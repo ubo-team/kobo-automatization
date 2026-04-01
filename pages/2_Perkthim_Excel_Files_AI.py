@@ -162,14 +162,6 @@ def translate_dataframe(df, source_col, target_col, from_lang, to_lang):
 
 st.title("Fillo me Përkthimin e Pyetësorëve")
 
-with st.expander("Testo API Key"):
-    if st.button("Testo Gemini API"):
-        try:
-            test_response = gemini_model.generate_content("Translate 'Hello' to Albanian. Return ONLY the translation.")
-            st.success(f"API funksionon! Pergjigja: {test_response.text.strip()}")
-        except Exception as e:
-            st.error(f"API nuk funksionon: {e}")
-
 uploaded_file = st.file_uploader("Ngarko Excel-in", type=["xlsx"])
 
 if uploaded_file:
