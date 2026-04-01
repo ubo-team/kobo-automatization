@@ -429,7 +429,8 @@ elif mode == "Ngarko XLSForm":
             label_text = row.get(from_label, "")
             return extract_code(label_text)
 
-        matched_q, total_q, unmatched_q = 0, 0, []
+        stats = {"matched": 0, "total": 0}
+        unmatched_q = []
 
         # ── Merge hints ──
         if to_hint_col and "hint" in translated_df.columns:
@@ -442,7 +443,6 @@ elif mode == "Ngarko XLSForm":
 
         # ── Translate survey questions ──
         def translate_question_auto(row):
-            nonlocal matched_q, total_q
             row_type = str(row.get("type", "")).strip().lower()
             if row_type.startswith("begin_group") or row_type.startswith("end_group"):
                 return row.get(from_label, "")
@@ -451,9 +451,9 @@ elif mode == "Ngarko XLSForm":
 
             code = get_survey_code(row)
             if code:
-                total_q += 1
+                stats["total"] += 1
                 if code in question_translations:
-                    matched_q += 1
+                    stats["matched"] += 1
                     return capitalize_first(question_translations[code])
                 else:
                     unmatched_q.append(f"{code}: {str(row.get(from_label, ''))[:50]}")
@@ -463,7 +463,7 @@ elif mode == "Ngarko XLSForm":
 
         survey_df[to_label] = survey_df.apply(translate_question_auto, axis=1)
 
-        st.caption(f"Pyetje të gjetura: {matched_q}/{total_q} (Word ka {len(question_translations)} pyetje)")
+        st.caption(f"Pyetje të gjetura: {stats['matched']}/{stats['total']} (Word ka {len(question_translations)} pyetje)")
         if unmatched_q:
             with st.expander(f"{len(unmatched_q)} pyetje pa përkthim"):
                 for item in unmatched_q:
