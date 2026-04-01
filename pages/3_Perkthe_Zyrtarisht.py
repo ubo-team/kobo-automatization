@@ -7,7 +7,7 @@ from difflib import get_close_matches
 import os
 
 QUESTION_PATTERN = re.compile(
-    r"\[ *(single|multiple|open|numeric|matrix(?: [a-z0-9]*)*|multiple matrix|scale) *\]",
+    r"\[ *(single|multiple|open|text|numeric|matrix(?: [a-z0-9]*)*|multiple matrix|scale|other) *\]",
     re.IGNORECASE,
 )
 
@@ -470,29 +470,43 @@ elif mode == "Ngarko XLSForm":
                     st.text(item)
 
         # ── Translate choices by matching parent question code + option position ──
-        # Build: list_name → question code
+        # Build: list_name → question code (use ORIGINAL case from type column)
         list_code_map = {}
         for _, row in survey_df.iterrows():
-            row_type = str(row.get("type", "")).strip().lower()
+            row_type_raw = str(row.get("type", "")).strip()
+            row_type = row_type_raw.lower()
             if "select_one" in row_type or "select_multiple" in row_type:
                 code = get_survey_code(row)
                 if code:
-                    list_name = row_type.split()[1] if len(row_type.split()) > 1 else None
+                    # Use original case for list_name to match choices sheet
+                    parts = row_type_raw.split()
+                    list_name = parts[1] if len(parts) > 1 else None
                     if list_name:
                         list_code_map[list_name] = code
 
         choices_df["_option_pos"] = choices_df.groupby("list_name").cumcount() + 1
 
+        # Debug info
+        with st.expander("Debug: Choices mapping"):
+            st.write(f"list_code_map: {list_code_map}")
+            st.write(f"option_translations keys (first 20): {list(option_translations.keys())[:20]}")
+
         def translate_choice(row):
             list_name = row.get("list_name")
             pos = row.get("_option_pos")
+            source_text = row.get(from_label, "")
+
             parent_code = list_code_map.get(list_name)
             if parent_code and pd.notna(pos):
                 key = (parent_code, int(pos))
                 if key in option_translations:
                     return capitalize_first(option_translations[key])
             # Fallback to manual dictionary
-            return apply_manual(row.get(from_label, ""))
+            manual = apply_manual(source_text)
+            if manual:
+                return manual
+            # Copy source text for names, numbers, municipalities, etc.
+            return source_text if pd.notna(source_text) else ""
 
         if from_label in choices_df.columns and to_label in choices_df.columns:
             choices_df[to_label] = choices_df.apply(translate_choice, axis=1)
