@@ -43,9 +43,11 @@ def extract_matrix_table(table, data, parent_qid, parent_qtext):
                 option_qid = f"{sub_qid}.{col_index}"
                 data.append({"Question ID": sub_qid, "Question Text": "", "Option ID": option_qid, "Option Text": option_text, "hint": ""})
 
+NOTE_PATTERN = re.compile(r"^\[note\]\s*(.*)", re.IGNORECASE)
+
 def extract_from_docx_to_excel(docx_file):
     doc = Document(docx_file)
-    data, question_counter, table_index = [], 0, 0
+    data, question_counter, note_counter, table_index = [], 0, 0, 0
     paragraphs, para_index = list(doc.paragraphs), 0
     skip_options, last_matrix_qid, last_matrix_qtext = False, None, None
 
@@ -54,6 +56,20 @@ def extract_from_docx_to_excel(docx_file):
         text = para.text.strip()
 
         if not text:
+            para_index += 1
+            continue
+
+        note_match = NOTE_PATTERN.match(text)
+        if note_match:
+            note_counter += 1
+            note_text = note_match.group(1).strip()
+            data.append({
+                "Question ID": f"NOTE{note_counter}",
+                "Question Text": note_text,
+                "Option ID": None,
+                "Option Text": None,
+                "hint": ""
+            })
             para_index += 1
             continue
 
@@ -417,6 +433,14 @@ elif mode == "Ngarko XLSForm":
                 option_counter += 1
                 option_translations[(current_q_code, option_counter)] = str(otext).strip()
 
+        # ── Build note translations (positional matching) ──
+        note_translations = {}
+        for _, row in translated_df.iterrows():
+            qid = str(row.get("Question ID", ""))
+            qtext = row.get("Question Text")
+            if qid.startswith("NOTE") and pd.notna(qtext) and str(qtext).strip():
+                note_translations[qid] = str(qtext).strip()
+
         # ── Match survey questions by code ──
         def get_survey_code(row):
             label_text = row.get(from_label, "")
@@ -424,6 +448,7 @@ elif mode == "Ngarko XLSForm":
 
         stats = {"matched": 0, "total": 0}
         unmatched_q = []
+        note_counter = [0]  # mutable for closure
 
         # ── Merge hints ──
         if to_hint_col and "hint" in translated_df.columns:
@@ -440,6 +465,10 @@ elif mode == "Ngarko XLSForm":
             if row_type.startswith("begin_group") or row_type.startswith("end_group"):
                 return row.get(from_label, "")
             if row_type.startswith("note"):
+                note_counter[0] += 1
+                note_key = f"NOTE{note_counter[0]}"
+                if note_key in note_translations:
+                    return note_translations[note_key]
                 return row.get(from_label, "")
 
             code = get_survey_code(row)
