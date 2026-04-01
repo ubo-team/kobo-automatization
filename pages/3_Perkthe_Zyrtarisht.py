@@ -152,24 +152,17 @@ elif mode == "Ngarko XLSForm":
         if hint_columns:
             to_hint_col = st.selectbox("Zgjidh kolonën e hint-it ku do të vendoset (p.sh. Albanian ose Serbian):", hint_columns)
         else:
-            st.warning("XLSForm nuk ka kolona për hint. Shtoni një kolonë 'hint::...' në XLSForm për të vazhduar.")
             to_hint_col = None
 
-        def detect_language(label_col):
-            if "albanian" in label_col.lower():
-                return "al"
-            elif "serbian" in label_col.lower():
-                return "sr"
-            elif "english" in label_col.lower():
-                return "en"
-            return None
-
-        from_lang = detect_language(from_label)
-        to_lang = detect_language(to_label)
-
-        if not from_lang or not to_lang:
-            st.warning("Nuk u detektua gjuha nga kolonat e përzgjedhura. Sigurohu që kolonat përmbajnë emrin e gjuhës.")
-            st.stop()
+        LANG_OPTIONS = {
+            "Gjuha Shqipe": "al",
+            "Gjuha Angleze": "en",
+            "Gjuha Serbe": "sr",
+        }
+        from_lang_label = st.selectbox("Gjuha burimore:", list(LANG_OPTIONS.keys()), key="from_lang_zyrt")
+        to_lang_label = st.selectbox("Gjuha e përkthimit:", list(LANG_OPTIONS.keys()), key="to_lang_zyrt")
+        from_lang = LANG_OPTIONS[from_lang_label]
+        to_lang = LANG_OPTIONS[to_lang_label]
 
         def clean_label(val):
             if pd.isna(val): return ""
