@@ -213,7 +213,7 @@ if df is not None and question_cols:
                 with st.spinner("Duke analizuar përgjigjet…"):
                     sample_responses = df[col].dropna().astype(str)
                     sample_responses = sample_responses[sample_responses.str.strip() != ""]
-                    sample = sample_responses.sample(min(50, len(sample_responses)), random_state=42).tolist()
+                    sample = sample_responses.sample(int(0.75 * len(sample_responses)), random_state=42).tolist()
                     numbered = "\n".join(f"{i+1}. {r}" for i, r in enumerate(sample))
 
                     q_label = st.session_state.question_labels.get(col, col)
