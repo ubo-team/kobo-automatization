@@ -92,7 +92,7 @@ Rules:
 2. If a response does not clearly fit any category, assign it to "Other".
 3. If the response is empty, output: 999
 4. ONLY use "NEW: <short category name>" if the response represents a genuinely distinct theme that NONE of the existing categories can cover. Be very conservative — prefer "Other" over creating new categories.
-5. The output should be all in English, even if the answers are in other languages.
+5. The output should be all in {language}, even if the answers are in other languages.
 6. Output ONLY the category names — no explanation, no punctuation, no extra text.
 7. Use the EXACT category names as listed above (case-sensitive).
 
@@ -113,20 +113,24 @@ if "question_followup" not in st.session_state:
     st.session_state.question_followup = {}
 if "prompt_template" not in st.session_state or "{response}" in st.session_state.prompt_template:
     st.session_state.prompt_template = DEFAULT_PROMPT
+if "language" not in st.session_state:
+    st.session_state.language = "English"
 if "results" not in st.session_state:
     st.session_state.results = None
 
 # ── Settings ─────────────────────────────────────────────────────────────────
 with st.expander("Konfigurimet", expanded=False):
-    col_model, col_batch = st.columns(2)
+    col_model, col_batch, col_lang = st.columns(3)
     with col_model:
         model_name = st.selectbox("Model", ["gemini-3.1-flash-lite-preview", "gemini-2.5-flash", "gemini-2.5-pro"], index=0)
     with col_batch:
         batch_size = st.number_input("Batch size (rreshta per thirrje)", min_value=5, max_value=100, value=20, step=5)
+    with col_lang:
+        st.session_state.language = st.selectbox("Gjuha e output-it", ["English", "Albanian"], index=["English", "Albanian"].index(st.session_state.language))
 
     st.divider()
     st.subheader("Prompt Template")
-    st.caption("Placeholders: `{question_label}`, `{categories}`, `{responses}`")
+    st.caption("Placeholders: `{question_label}`, `{categories}`, `{responses}`, `{language}`")
     st.session_state.prompt_template = st.text_area(
         "Edit prompt",
         value=st.session_state.prompt_template,
@@ -213,23 +217,38 @@ if df is not None and question_cols:
                 with st.spinner("Duke analizuar përgjigjet…"):
                     sample_responses = df[col].dropna().astype(str)
                     sample_responses = sample_responses[sample_responses.str.strip() != ""]
-                    sample = sample_responses.sample(int(0.75 * len(sample_responses)), random_state=42).tolist()
+                    sample = sample_responses.sample(int(0.8 * len(sample_responses)), random_state=42).tolist()
                     numbered = "\n".join(f"{i+1}. {r}" for i, r in enumerate(sample))
 
                     q_label = st.session_state.question_labels.get(col, col)
-                    suggest_prompt = f"""You are a survey analyst. Based on the question and a sample of responses below, suggest between 5 and 15 meaningful categories that cover the main themes in the responses.
+                    lang = st.session_state.language
+                    if lang == "Albanian":
+                        lang_instruction = "in Albanian. If the responses are in Albanian, first understand them in their original language, then produce category names in Albanian."
+                        other_label = "Tjetër"
+                    else:
+                        lang_instruction = "in English."
+                        other_label = "Other"
+                    suggest_prompt = f"""You are a survey analyst. Your task is to suggest categories that will minimize "Other" assignments by covering the most frequent response patterns.
 
 Question: {q_label}
 
 Sample responses:
 {numbered}
 
+STEP 1 — Frequency analysis (internal, do not output):
+Read every response. Group near-identical or semantically equivalent answers together. Count each group. Rank groups from most to least frequent. Note the top patterns that together account for at least 80% of responses.
+
+STEP 2 — Generate categories:
+Create categories ONLY from the top patterns identified in Step 1. Do NOT invent categories for rare or unique responses — those belong in "{other_label}".
+
 Rules:
 1. Output one category name per line, nothing else.
-2. Categories should be short (2-5 words), in English.
-3. Include "Other" as the last category for responses that don't fit.
-4. Be specific — avoid generic labels like "Positive" or "Negative" unless the responses are clearly sentiment-based.
-5. Aim to cover at least 80% of the sample responses with your categories."""
+2. Between 5 and 15 categories total, {lang_instruction}
+3. Categories must be short (2–5 words) and specific — name the actual thing people said, not a vague umbrella.
+4. Order categories by estimated frequency, most common first.
+5. NEVER use generic labels like "Positive", "Negative", "Other issues", or "Miscellaneous" except for "{other_label}".
+6. "{other_label}" MUST be the last line and should represent fewer than 20% of responses — if it would be higher, add more categories.
+7. Do not create a category unless at least 2 responses clearly belong to it."""
 
                     try:
                         suggest_model = genai.GenerativeModel(model_name)
@@ -378,6 +397,7 @@ if df is not None and question_cols:
                     question_label=question_label,
                     categories=cats_str,
                     responses="\n".join(numbered_responses),
+                    language=st.session_state.language,
                 )
 
                 try:
