@@ -4,7 +4,7 @@ import pandas as pd
 import google.generativeai as genai
 import io
 import re
-from collections import Counter
+from collections import Counter, OrderedDict
 
 # -------------------------------
 # Page Configuration
@@ -80,21 +80,22 @@ st.title("Grupimi i pyetjeve të hapura")
 st.markdown("Ngarko një dokument Excel me përgjigje të hapura. Aplikacioni do t'i kategorizojë automatikisht duke përdorur Gemini API.")
 
 # ── Default prompt ────────────────────────────────────────────────────────────
-DEFAULT_PROMPT = """You are a survey response categorizer. Your task is to assign ONE category to each survey response in a batch.
+DEFAULT_PROMPT = """You are a survey response categorizer. Your ONLY task is to assign exactly ONE category from the provided list to each survey response.
 
 Question: {question_label}
 
-Available categories:
+Available categories (use these EXACT names — copy-paste, do not rephrase):
 {categories}
 
-Rules:
-1. You MUST choose from the categories listed above. Do NOT invent new category names or rephrase existing ones.
-2. If a response does not clearly fit any category, assign it to "Other".
-3. If the response is empty, output: 999
-4. ONLY use "NEW: <short category name>" if the response represents a genuinely distinct theme that NONE of the existing categories can cover. Be very conservative — prefer "Other" over creating new categories.
-5. The output should be all in {language}, even if the answers are in other languages.
-6. Output ONLY the category names — no explanation, no punctuation, no extra text.
-7. Use the EXACT category names as listed above (case-sensitive).
+CRITICAL RULES FOR CONSISTENCY:
+1. You MUST copy-paste category names EXACTLY as listed above. Do NOT paraphrase, abbreviate, reword, or create synonyms. For example, if the category is "Water supply", NEVER write "Water", "Water issues", "Water supply problems", or any variation.
+2. Two responses that express the same idea MUST receive the same category, even if they use different words. For example, "water is bad", "we need clean water", and "water supply is poor" should ALL get the same water-related category.
+3. When in doubt between two categories, choose the one that is MORE SPECIFIC to the response content.
+4. If a response does not clearly fit any category, assign it to "Other". Prefer "Other" over inventing new categories.
+5. If the response is empty, output: 999
+6. ONLY use "NEW: <short category name>" if the response represents a genuinely distinct theme that NONE of the existing categories can cover — this should be extremely rare.
+7. The output must be in {language}, even if the answers are in other languages.
+8. Output ONLY the category name per line — no explanation, no punctuation, no extra text.
 
 Responses (one per line, numbered):
 {responses}
@@ -366,25 +367,55 @@ if df is not None and question_cols:
             if not non_empty_indices:
                 return results
 
-            # Only send non-empty responses to Gemini in batches
-            total_to_process = len(non_empty_indices)
-            num_batches = (total_to_process + batch_size - 1) // batch_size
-            skipped = len(responses) - total_to_process
-            prog = st.progress(0, text=f"Duke kategorizuar **{col}** ({total_to_process} përgjigje, {skipped} bosh të kapërcyera)…")
+            # --- Deduplication: categorize each unique response text only once ---
+            followup_info = st.session_state.question_followup.get(col)
+
+            # Build a key for each response (includes parent answer for follow-ups)
+            def make_key(idx):
+                resp_text = str(responses.iloc[idx]).strip()
+                if followup_info:
+                    parent_val = df[followup_info["column"]].iloc[idx]
+                    if pd.isna(parent_val) or str(parent_val).strip() == "":
+                        parent_answer = "(no answer)"
+                    else:
+                        parent_answer = str(parent_val).strip()
+                    return f"[{parent_answer}] {resp_text}"
+                return resp_text
+
+            # Map each unique key to the list of row indices that share it
+            unique_keys = OrderedDict()
+            for idx in non_empty_indices:
+                key = make_key(idx)
+                if key not in unique_keys:
+                    unique_keys[key] = {"idx": idx, "rows": []}
+                unique_keys[key]["rows"].append(idx)
+
+            unique_list = list(unique_keys.items())  # [(key, {"idx": ..., "rows": [...]}), ...]
+            total_unique = len(unique_list)
+            total_original = len(non_empty_indices)
+            deduped = total_original - total_unique
+            skipped = len(responses) - total_original
+
+            num_batches = (total_unique + batch_size - 1) // batch_size
+            prog = st.progress(0, text=f"Duke kategorizuar **{col}** ({total_unique} unik nga {total_original} përgjigje, {deduped} dublikatë, {skipped} bosh)…")
+
+            unique_labels = [""] * total_unique
 
             for batch_idx in range(num_batches):
                 start = batch_idx * batch_size
-                end = min(start + batch_size, total_to_process)
-                batch_indices = non_empty_indices[start:end]
+                end = min(start + batch_size, total_unique)
+                batch_items = unique_list[start:end]
 
-                followup_info = st.session_state.question_followup.get(col)
                 numbered_responses = []
-                for j, idx in enumerate(batch_indices):
+                for j, (key, info) in enumerate(batch_items):
+                    idx = info["idx"]
                     resp_text = str(responses.iloc[idx])
                     if followup_info:
-                        parent_answer = str(df[followup_info["column"]].iloc[idx])
-                        if pd.isna(df[followup_info["column"]].iloc[idx]) or parent_answer.strip() == "":
+                        parent_val = df[followup_info["column"]].iloc[idx]
+                        if pd.isna(parent_val) or str(parent_val).strip() == "":
                             parent_answer = "(no answer)"
+                        else:
+                            parent_answer = str(parent_val)
                         numbered_responses.append(f"{j+1}. [Previous answer: {parent_answer}] {resp_text}")
                     else:
                         numbered_responses.append(f"{j+1}. {resp_text}")
@@ -404,16 +435,21 @@ if df is not None and question_cols:
                     text, in_tok, out_tok = call_gemini_batch(prompt)
                     token_counts["input"] += in_tok
                     token_counts["output"] += out_tok
-                    batch_labels = parse_batch_response(text, len(batch_indices))
+                    batch_labels = parse_batch_response(text, len(batch_items))
                 except Exception as e:
                     st.warning(f"Gabim API në batch {batch_idx+1}: {e}")
-                    batch_labels = ["Error"] * len(batch_indices)
+                    batch_labels = ["Error"] * len(batch_items)
 
-                # Map results back to original positions
-                for j, idx in enumerate(batch_indices):
-                    results[idx] = batch_labels[j]
+                for j in range(len(batch_items)):
+                    unique_labels[start + j] = batch_labels[j]
 
-                prog.progress(end / total_to_process, text=f"Duke kategorizuar **{col}** ({end}/{total_to_process})")
+                prog.progress(end / total_unique, text=f"Duke kategorizuar **{col}** ({end}/{total_unique} unik)")
+
+            # --- Map labels back: every duplicate row gets the same category ---
+            for i, (key, info) in enumerate(unique_list):
+                label = unique_labels[i]
+                for row_idx in info["rows"]:
+                    results[row_idx] = label
 
             prog.empty()
             return results
