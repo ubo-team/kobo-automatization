@@ -219,8 +219,16 @@ def generate_xlsform(input_docx, output_xlsx, coding_mode, data_method=True, sel
     i = 0
     q_index = 1
     note_index = 1
+    prev_i = -1
 
     while i < len(lines):
+        if i == prev_i:
+            raise ValueError(
+                f"Formatimi i Word dokumentit nuk u njoh në linjën: '{lines[i]}'. "
+                f"Pyetja mund të mos ketë tag të vlefshëm (p.sh. [single], [text]) ose numërim, "
+                f"duke shkaktuar bllokim të procesit."
+            )
+        prev_i = i
         line = lines[i]
 
         if line.lower().startswith("[note]"):
@@ -406,6 +414,10 @@ def generate_xlsform(input_docx, output_xlsx, coding_mode, data_method=True, sel
 
             elif q_type.startswith("ranking"):
                 match = re.findall(r"\d+", q_type)
+                if not match:
+                    raise ValueError(
+                        f"Tag-u [ranking] në linjën '{line}' nuk ka numër (p.sh. [ranking 5])."
+                    )
                 if match:
                     rank_count = int(match[0])
                     list_name = qname + "_list"
@@ -442,8 +454,11 @@ def generate_xlsform(input_docx, output_xlsx, coding_mode, data_method=True, sel
                         clean = clean_label_prefix(opt)
                         choices.append({"list_name": list_name, "name": str(idx), "label": clean})
                         
-            elif q_type is None:
-                raise ValueError(f"Formatimi i Word dokumentit nuk është valid në këtë linjë: '{line}'")
+            else:
+                raise ValueError(
+                    f"Tipi i pyetjes '{q_type}' nuk u njoh në linjën: '{line}'. "
+                    f"Kontrollo formatimin e tag-ut (p.sh. [scale 1-5], [matrix single 3])."
+                )
         else:
             i += 1
 
@@ -498,21 +513,44 @@ if uploaded_file:
 
     # Extract question numbers (e.g., 1, D1, 2a, Q1.2 etc.)
     question_options = []
+    unnumbered_questions = []
     for line in lines:
         try:
             # Extract all tags from this line (e.g., [random][single][hint: ...])
             tags = extract_tags(line)
             q_type, _, _, _ = parse_question_tags(tags)
 
-            # Only process lines that define a question type
-            if q_type:
-                _, label_text = extract_question_number_and_text(strip_type(line))
+            # Only process lines that define a question type (skip [other] — they get filtered out)
+            if q_type and q_type != "other":
+                qnum, label_text = extract_question_number_and_text(strip_type(line))
                 if label_text:
                     question_options.append(label_text)
+                if not qnum and label_text:
+                    unnumbered_questions.append(label_text)
 
         except ValueError as e:
             st.error(f"Gabim në rreshtin: **{line}**\n\n{str(e)}")
             st.stop()
+
+    is_original_mode = coding_mode == "Ruaj numërimin origjinal si në Word (A1, B2a, C1, …)"
+    block_generation = False
+    if unnumbered_questions:
+        if is_original_mode:
+            st.error(
+                "**Janë gjetur pyetje pa numërim në dokumentin Word.**\n\n"
+                "Ju keni zgjedhur modalitetin **'Ruaj numërimin origjinal'**, por pyetjet e mëposhtme nuk kanë numër "
+                "dhe do të marrin emra automatikë (P1, P2, ...), duke krijuar një përzierje me numërimin origjinal.\n\n"
+                "Ju lutemi shtoni numra në dokumentin Word për këto pyetje, ose zgjidhni një modalitet tjetër kodimi:"
+            )
+            for q in unnumbered_questions:
+                st.markdown(f"- {q}")
+            block_generation = True
+        else:
+            st.warning(
+                "**Janë gjetur pyetje pa numërim.** Këto do të marrin emra automatikë (P{n} ose Q{n}):"
+            )
+            for q in unnumbered_questions:
+                st.markdown(f"- {q}")
 
 
     st.session_state["question_lines"] = lines
@@ -525,7 +563,7 @@ if uploaded_file:
 
 
     if data_collection_method:
-        generate_button = st.button("Gjenero formularin XLS")
+        generate_button = st.button("Gjenero formularin XLS", disabled=block_generation)
         if generate_button:
             with st.spinner("Po përpunon dokumentin..."):
                 data_method = data_collection_method == "Face to face"
