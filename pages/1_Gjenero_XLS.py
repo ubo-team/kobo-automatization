@@ -106,6 +106,63 @@ def clean_label_prefix(text):
 def has_random_tag(text):
     return "[random]" in text.lower()
 
+def is_section_header(line):
+    """Lines that start with 'Section' or 'Seksion' are treated as skipped section headers."""
+    return re.match(r'^\s*(section|seksion)\b', line, flags=re.IGNORECASE) is not None
+
+def find_orphan_lines(lines):
+    """Lines that the main parser would silently drop: no tag, no recognized type,
+    not a section header, and not consumed as an option/row/note continuation by a
+    preceding tagged question. Mirrors the index advancement of generate_xlsform."""
+    orphans = []
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+
+        if is_section_header(line):
+            i += 1
+            continue
+
+        tags = extract_tags(line)
+        q_type, matrix_count, _, _ = parse_question_tags(tags)
+
+        if not q_type:
+            # Ignore visually-empty lines (just underscores, dashes, pipes, whitespace)
+            if re.sub(r'[\s_\-\|]+', '', line):
+                orphans.append(line)
+            i += 1
+            continue
+
+        if q_type == "other":
+            i += 1
+            continue
+
+        if q_type == "note" or q_type in ("single", "multiple") or q_type.startswith("ranking"):
+            # Consume continuation/options until next tagged line
+            i += 1
+            while i < len(lines):
+                next_type, _, _, _ = parse_question_tags(extract_tags(lines[i]))
+                if next_type:
+                    break
+                i += 1
+            continue
+
+        if "matrix" in q_type:
+            i += 1
+            if isinstance(matrix_count, int):
+                i = min(i + matrix_count, len(lines))
+            while i < len(lines):
+                next_type, _, _, _ = parse_question_tags(extract_tags(lines[i]))
+                if next_type:
+                    break
+                i += 1
+            continue
+
+        # text, numeric, string, scale → single-line, no continuation
+        i += 1
+
+    return orphans
+
 def load_anketuesit_choices():
     # Merr kredencialet nga st.secrets
     gcp_info = st.secrets["gcp_service_account"]
@@ -231,14 +288,11 @@ def generate_xlsform(input_docx, output_xlsx, coding_mode, data_method=True, sel
         prev_i = i
         line = lines[i]
 
-        if line.lower().startswith("[note]"):
-            label = line[6:].strip()
-            survey.append({
-                "type": "note",
-                "name": f"note{note_index}",
-                "label": label
-            })
-            note_index += 1
+        # Treat "Section ..." / "Seksion ..." headers as skipped (same as [other])
+        if is_section_header(line):
+            clean = strip_type(line).strip()
+            if clean:
+                skipped_other_questions.append(clean)
             i += 1
             continue
 
@@ -298,7 +352,26 @@ def generate_xlsform(input_docx, output_xlsx, coding_mode, data_method=True, sel
                     start_index += 1
                 return opts, start_index
 
-            if q_type in ["single", "multiple"]:
+            if q_type == "note":
+                note_parts = [strip_type(line).strip()]
+                i += 1
+                while i < len(lines):
+                    next_tags = extract_tags(lines[i])
+                    next_type, _, _, _ = parse_question_tags(next_tags)
+                    if next_type:
+                        break
+                    note_parts.append(lines[i].strip())
+                    i += 1
+
+                note_label = "\n".join(p for p in note_parts if p)
+                survey.append({
+                    "type": "note",
+                    "name": f"note{note_index}",
+                    "label": note_label
+                })
+                note_index += 1
+
+            elif q_type in ["single", "multiple"]:
                 list_name = qname + "_list"
                 qstyle = "select_one" if q_type == "single" else "select_multiple"
                 question = {
@@ -516,12 +589,16 @@ if uploaded_file:
     unnumbered_questions = []
     for line in lines:
         try:
+            # Skip section headers entirely — they're treated as [other]
+            if is_section_header(line):
+                continue
+
             # Extract all tags from this line (e.g., [random][single][hint: ...])
             tags = extract_tags(line)
             q_type, _, _, _ = parse_question_tags(tags)
 
-            # Only process lines that define a question type (skip [other] — they get filtered out)
-            if q_type and q_type != "other":
+            # Only process lines that define a question type (skip [other] and [note] — they get filtered out / don't need numbers)
+            if q_type and q_type not in ("other", "note"):
                 qnum, label_text = extract_question_number_and_text(strip_type(line))
                 if label_text:
                     question_options.append(label_text)
@@ -552,6 +629,15 @@ if uploaded_file:
             for q in unnumbered_questions:
                 st.markdown(f"- {q}")
 
+    orphan_lines = find_orphan_lines(lines)
+    if orphan_lines:
+        st.warning(
+            "**Janë gjetur paragrafë pa tag dhe pa lidhje me ndonjë pyetje.** "
+            "Këto rreshta do të injorohen plotësisht (nuk do të shfaqen në formular). "
+            "Nëse janë pyetje, shto një tag (p.sh. `[single]`, `[text]`); nëse janë seksione, fillojini me `Section` ose `Seksion`:"
+        )
+        for o in orphan_lines:
+            st.markdown(f"- {o}")
 
     st.session_state["question_lines"] = lines
     selected_questions = st.multiselect(
