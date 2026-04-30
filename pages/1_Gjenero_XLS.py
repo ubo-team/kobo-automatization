@@ -331,7 +331,7 @@ def generate_xlsform(input_docx, output_xlsx, coding_mode, data_method=True, sel
             qname, q_index = generate_qname(qnum, q_index, coding_mode)
 
             qname = qname.rstrip('.')
-            required = "yes"
+            required = "true"
 
             def add_common_question(fields):
                 if parameters:
@@ -400,7 +400,7 @@ def generate_xlsform(input_docx, output_xlsx, coding_mode, data_method=True, sel
                             "name": open_name,
                             "label": f"{clean}",
                             "relevant": relevant_expr,
-                            "required": "yes"
+                            "required": "true"
                         })
 
             elif q_type == "numeric":
@@ -465,8 +465,8 @@ def generate_xlsform(input_docx, output_xlsx, coding_mode, data_method=True, sel
                     rows.append(lines[i])
                     i += 1
 
-                survey.append({"type": "begin_group", "name": f"{qname}_group", "appearance": "field-list", "required": "no"})
-                survey.append({"type": f"{style} {list_name}", "name": f"{qname}_matrix_label", "label": label, "appearance": "label", "required": "no"})
+                survey.append({"type": "begin_group", "name": f"{qname}_group", "appearance": "field-list", "required": "false"})
+                survey.append({"type": f"{style} {list_name}", "name": f"{qname}_matrix_label", "label": label, "appearance": "label", "required": "false"})
 
                 for idx, row in enumerate(rows, 1):
                     field = {
@@ -474,7 +474,7 @@ def generate_xlsform(input_docx, output_xlsx, coding_mode, data_method=True, sel
                         "name": f"{qname}_{idx}",
                         "label": row,
                         "appearance": "list-nolabel",
-                        "required": "yes"
+                        "required": "true"
                     }
                     if parameters:
                         field["parameters"] = parameters
@@ -506,7 +506,7 @@ def generate_xlsform(input_docx, output_xlsx, coding_mode, data_method=True, sel
                             "type": f"select_one {list_name}",
                             "name": rank_name,
                             "label": ranking_labels[idx - 1] if idx <= 20 else ranking_labels[-1],
-                            "required": "yes",
+                            "required": "true",
                             "appearance": "minimal",
                             "choice_filter": " and ".join([f"not(selected(${{{qname}_{j}}}, name))" for j in range(1, idx)])
                         })
@@ -535,8 +535,8 @@ def generate_xlsform(input_docx, output_xlsx, coding_mode, data_method=True, sel
         else:
             i += 1
 
-    survey.append({"type": "text", "name": "emri_mbiemri", "label": "Emri dhe mbiemri:", "required": "yes"})
-    survey.append({"type": "text", "name": "numri_telefonit", "label": "Numri i telefonit:", "required": "yes"})
+    survey.append({"type": "text", "name": "emri_mbiemri", "label": "Emri dhe mbiemri:", "required": "true"})
+    survey.append({"type": "text", "name": "numri_telefonit", "label": "Numri i telefonit:", "required": "true"})
 
     with pd.ExcelWriter(output_xlsx, engine='openpyxl') as writer:
         pd.DataFrame(survey).to_excel(writer, sheet_name="survey", index=False)
