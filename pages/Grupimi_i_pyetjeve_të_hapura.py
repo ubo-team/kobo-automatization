@@ -123,7 +123,7 @@ if "results" not in st.session_state:
 with st.expander("Konfigurimet", expanded=False):
     col_model, col_batch, col_lang = st.columns(3)
     with col_model:
-        model_name = st.selectbox("Model", ["gemini-3.1-flash-lite-preview", "gemini-2.5-flash", "gemini-2.5-pro"], index=0)
+        model_name = st.selectbox("Model", ["gemini-3.1-flash-lite", "gemini-2.5-flash", "gemini-2.5-pro"], index=0)
     with col_batch:
         batch_size = st.number_input("Batch size (rreshta per thirrje)", min_value=5, max_value=100, value=20, step=5)
     with col_lang:
