@@ -54,7 +54,7 @@ GEMINI_PRICING = {
         "inputPer1MTokens":  0.30,
         "outputPer1MTokens": 2.50,
     },
-    "models/gemini-3.1-flash-lite-preview": {
+    "models/gemini-3.1-flash-lite": {
         "inputPer1MTokens":  0.25,
         "outputPer1MTokens": 1.50,
     },
