@@ -90,17 +90,17 @@ Available categories (use these EXACT names — copy-paste, do not rephrase):
 CRITICAL RULES FOR CONSISTENCY:
 1. You MUST copy-paste category names EXACTLY as listed above. Do NOT paraphrase, abbreviate, reword, or create synonyms. For example, if the category is "Water supply", NEVER write "Water", "Water issues", "Water supply problems", or any variation.
 2. Two responses that express the same idea MUST receive the same category, even if they use different words. For example, "water is bad", "we need clean water", and "water supply is poor" should ALL get the same water-related category.
-3. DO NOT INVENT SENTIMENT OR DETAIL. The response must literally express what the category implies. If a category contains evaluative or qualifying words (e.g., "good", "bad", "i mirë", "i keq", "i suksesshëm", "i dështuar", "positive", "negative", "satisfied", "unsatisfied", or any place/person name), the response MUST itself contain that same evaluation, attribute, or specifier. A neutral, purely descriptive response (e.g., just naming a role, person, or topic — like "Mayor", "Kryetar komuna", "Police", "Water") must NEVER be placed into an evaluative or location-specific category. Examples of WRONG matches to avoid:
-   - Response: "Kryetar komuna" → Category: "Kryetar i mirë i Gjakovës" ❌ (response says neither "i mirë" nor "Gjakovë")
-   - Response: "Policia" → Category: "Policia e keqe" ❌ (response carries no negative evaluation)
-   - Response: "Uji" → Category: "Probleme me ujë" ❌ (response does not mention a problem)
-   If no neutral category matches the topic, use "Other" rather than projecting meaning onto the response.
-4. When choosing between two categories that both fit, pick the one that matches BOTH the topic AND the tone/specificity of the response — never one that adds tone or detail the response does not contain.
-5. If a response does not clearly fit any category, assign it to "Other". Prefer "Other" over a category that adds sentiment, attribution, or specifics the response did not state.
-6. If the response is empty, output: 999
-7. ONLY use "NEW: <short category name>" if the response represents a genuinely distinct theme that NONE of the existing categories can cover — this should be extremely rare.
-8. The output must be in {language}, even if the answers are in other languages.
-9. Output ONLY the category name per line — no explanation, no punctuation, no extra text.
+3. DO NOT INVENT CONTRADICTING OR SPECIFIC ATTRIBUTES. Three distinct guardrails:
+   a) **No contradictions.** Never place a response into a category whose stated attribute is the OPPOSITE of what the response says. Example: "Policia është e dobët" → "Policia e mirë" ❌, "Spital i keq" → "Spital i mirë" ❌.
+   b) **No invented place/person names.** A category that names a specific location, organization, or person may ONLY be assigned when the response refers to that same place/person — either explicitly, OR implicitly through the question's subject (e.g., if the question is about a known mayor of X, then generic responses about "the mayor" / "kryetar komune" refer to that same place by context and CAN be assigned to the place-specific category). Only invent attributes the question itself does not establish.
+   c) **Silence on sentiment is OK.** If the response is neutral about a topic (no positive/negative wording) and the only topical categories carry sentiment, you MAY still assign the closest topical category — DO NOT default to "Other" just because the response lacks sentiment. Only the contradiction rule (3a) and the place/person rule (3b) force you away from a topical match.
+4. Match by underlying meaning, not by literal words. A category named with a specific trait (e.g., "I korruptuar / Nuk më pëlqen") covers semantically equivalent negative judgments (weak, incapable, dishonest, failure, no character, etc.) unless the slash-naming clearly restricts it. Likewise a general positive category covers specific positive traits (modest, polite, accessible, educated) when no more specific positive category fits.
+5. When two categories both fit, pick the one whose topic and any stated attributes (place, sentiment, specifics) the response actually contains. Never pick a category that adds attributes the response contradicts or names a different place/person.
+6. Use "Other" only when no category shares the response's topic, OR when every topical category is ruled out by 3a / 3b. Do not over-use "Other".
+7. If the response is empty, output: 999
+8. Use "NEW: <short category name>" whenever you see a clear, recurring theme that none of the existing categories cover. Don't be conservative — downstream code only promotes a NEW label to a real category if it appears at least N times, so over-proposing is safe and under-proposing forces responses into "Other".
+9. The output must be in {language}, even if the answers are in other languages.
+10. Output ONLY the category name per line — no explanation, no punctuation, no extra text.
 
 Responses (one per line, numbered):
 {responses}
