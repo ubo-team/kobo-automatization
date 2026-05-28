@@ -61,6 +61,31 @@ GEMINI_PRICING = {
 }
 
 
+_MULTI_RESP_SEP_RE = re.compile(r"\s*[,;|/]\s*|\n+| and | & ", re.IGNORECASE)
+
+
+def split_multi_response(series: pd.Series, n: int) -> list[pd.Series]:
+    """Split each cell into n positions. Handles mixed delimiters per-cell (comma, semicolon,
+    pipe, slash, newline, ' and ', ' & '). If no structured separator is found but the cell
+    has exactly n whitespace-separated tokens, falls back to whitespace split.
+    Missing pieces are filled with empty strings."""
+    columns = [[] for _ in range(n)]
+    for cell in series:
+        if pd.isna(cell) or not str(cell).strip():
+            pieces = [""] * n
+        else:
+            text = str(cell).strip()
+            parts = [p.strip() for p in _MULTI_RESP_SEP_RE.split(text) if p.strip()]
+            if len(parts) == 1:
+                words = text.split()
+                if len(words) == n:
+                    parts = words
+            pieces = parts[:n] + [""] * max(0, n - len(parts))
+        for i in range(n):
+            columns[i].append(pieces[i])
+    return [pd.Series(c, dtype=object) for c in columns]
+
+
 def calculate_gemini_cost(prompt_tokens: int, completion_tokens: int, model: str) -> float:
     pricing = GEMINI_PRICING.get(model, GEMINI_PRICING["models/gemini-2.5-pro"])
     if "tier_threshold" in pricing:
@@ -117,6 +142,8 @@ if "question_labels" not in st.session_state:
     st.session_state.question_labels = {}
 if "question_followup" not in st.session_state:
     st.session_state.question_followup = {}
+if "question_multi_response" not in st.session_state:
+    st.session_state.question_multi_response = {}
 if "prompt_template" not in st.session_state or "{response}" in st.session_state.prompt_template:
     st.session_state.prompt_template = DEFAULT_PROMPT
 if "language" not in st.session_state:
@@ -218,12 +245,44 @@ if df is not None and question_cols:
             elif col in st.session_state.question_followup:
                 del st.session_state.question_followup[col]
 
+            # Multi-response toggle (one cell contains multiple answers)
+            is_multi = st.checkbox(
+                "Kjo pyetje ka shumë përgjigje në një qelizë (p.sh. 'opsioni 1, opsioni 2, ...')",
+                key=f"multi_check_{col}",
+                value=col in st.session_state.question_multi_response,
+                help="Nëse i njëjti respondent ka dhënë disa përgjigje në një qelizë (të ndara me presje, hapësirë, pikëpresje, etj.), aktivizoje këtë. Çdo qelizë do të ndahet automatikisht në N pjesë dhe do të krijohen N kolona të kategorizuara.",
+            )
+            if is_multi:
+                n_resp = st.number_input(
+                    "Sa përgjigje pritet të ketë në çdo rresht?",
+                    min_value=2, max_value=20,
+                    value=st.session_state.question_multi_response.get(col, {}).get("n", 3),
+                    step=1,
+                    key=f"multi_n_{col}",
+                    help="Pjesët e munguara (kur respondenti dha më pak përgjigje) do të shënohen si 999.",
+                )
+                st.session_state.question_multi_response[col] = {"n": int(n_resp)}
+            elif col in st.session_state.question_multi_response:
+                del st.session_state.question_multi_response[col]
+
             # Suggest categories button
             if st.button("Sugjero kategoritë me AI", key=f"suggest_{col}"):
                 with st.spinner("Duke analizuar përgjigjet…"):
-                    sample_responses = df[col].dropna().astype(str)
-                    sample_responses = sample_responses[sample_responses.str.strip() != ""]
-                    sample = sample_responses.sample(int(0.8 * len(sample_responses)), random_state=42).tolist()
+                    multi_info_suggest = st.session_state.question_multi_response.get(col)
+                    if multi_info_suggest:
+                        n_resp = multi_info_suggest["n"]
+                        sub_series_list = split_multi_response(df[col], n_resp)
+                        flat = []
+                        for s in sub_series_list:
+                            for v in s:
+                                if v and str(v).strip():
+                                    flat.append(str(v).strip())
+                        sample_responses = pd.Series(flat, dtype=object)
+                    else:
+                        sample_responses = df[col].dropna().astype(str)
+                        sample_responses = sample_responses[sample_responses.str.strip() != ""]
+                    sample_size = max(1, int(0.8 * len(sample_responses)))
+                    sample = sample_responses.sample(sample_size, random_state=42).tolist() if len(sample_responses) else []
                     numbered = "\n".join(f"{i+1}. {r}" for i, r in enumerate(sample))
 
                     q_label = st.session_state.question_labels.get(col, col)
@@ -339,6 +398,89 @@ if df is not None and question_cols:
                         time.sleep(wait)
                     else:
                         raise e
+
+        def llm_split_cells(series: pd.Series, n: int, question_label: str, split_batch_size: int = 30) -> list[pd.Series]:
+            """Use Gemini to split each non-empty cell into up to n distinct answers, using semantic
+            judgment (so 'Eurostore malvesa' splits into two but 'Auto Star Mitrovica' stays as one).
+            Returns a list of n pd.Series aligned with the input. Identical cells are deduplicated."""
+            cells = list(series)
+
+            unique_cells = OrderedDict()
+            for cell in cells:
+                if pd.isna(cell):
+                    continue
+                key = str(cell).strip()
+                if key and key not in unique_cells:
+                    unique_cells[key] = None
+
+            unique_list = list(unique_cells.keys())
+            total = len(unique_list)
+            split_map: dict[str, list[str]] = {}
+
+            if total > 0:
+                num_batches = (total + split_batch_size - 1) // split_batch_size
+                prog = st.progress(0, text=f"Duke ndarë me AI ({total} qeliza unike)…")
+                for batch_idx in range(num_batches):
+                    start = batch_idx * split_batch_size
+                    end = min(start + split_batch_size, total)
+                    batch = unique_list[start:end]
+                    numbered = "\n".join(f"{i+1}. {c}" for i, c in enumerate(batch))
+
+                    split_prompt = f"""You are splitting survey responses into individual answers.
+
+The question asked was: "{question_label}"
+Each respondent was expected to give up to {n} distinct answers in ONE cell. Respondents are inconsistent — some use commas, some semicolons, some just spaces, some use "and"/"&", some use newlines. CRITICAL: a single brand/place/person/concept that happens to be multiple words (e.g. "Auto Star Mitrovica", "Coca Cola", "New York") must stay as ONE answer.
+
+Use semantic judgment to decide what is one answer vs two. Examples:
+- "Eurostore malvesa" → two separate brand names → ["Eurostore", "malvesa"]
+- "Auto Star Mitrovica" → one company name → ["Auto Star Mitrovica"]
+- "uji, rryma, rrugen" → three things → ["uji", "rryma", "rrugen"]
+- "water and electricity" → two things → ["water", "electricity"]
+- "New York and Los Angeles" → two cities → ["New York", "Los Angeles"]
+
+Output rules:
+- One line per input, in the same numbered order as the input.
+- Format: "<number>. piece1 | piece2 | piece3"  (use " | " — space-pipe-space — between pieces).
+- If the respondent gave only one item, output just that item with no pipe.
+- Maximum {n} pieces per line. If you find more, keep the {n} most prominent.
+- Do NOT add explanations, headers, or extra text. Only the numbered lines.
+
+Inputs:
+{numbered}"""
+
+                    try:
+                        text, in_tok, out_tok = call_gemini_batch(split_prompt)
+                        token_counts["input"] += in_tok
+                        token_counts["output"] += out_tok
+                        for line in text.splitlines():
+                            line = line.strip()
+                            if not line:
+                                continue
+                            m = re.match(r"^(\d+)[\.\)\-:]\s*(.+)$", line)
+                            if not m:
+                                continue
+                            idx_in_batch = int(m.group(1)) - 1
+                            if 0 <= idx_in_batch < len(batch):
+                                parts = [p.strip() for p in m.group(2).split("|") if p.strip()]
+                                if parts:
+                                    split_map[batch[idx_in_batch]] = parts[:n]
+                    except Exception as e:
+                        st.warning(f"Gabim gjatë ndarjes me AI në batch {batch_idx+1}: {e}")
+
+                    prog.progress(end / total, text=f"Duke ndarë me AI ({end}/{total} qeliza)")
+                prog.empty()
+
+            columns = [[] for _ in range(n)]
+            for cell in cells:
+                if pd.isna(cell) or not str(cell).strip():
+                    pieces = [""] * n
+                else:
+                    key = str(cell).strip()
+                    parts = split_map.get(key, [key])
+                    pieces = parts[:n] + [""] * max(0, n - len(parts))
+                for i in range(n):
+                    columns[i].append(pieces[i])
+            return [pd.Series(c, dtype=object) for c in columns]
 
         def parse_batch_response(text: str, expected_count: int) -> list[str]:
             """Parse numbered lines from model output. Handles multi-word categories."""
@@ -459,11 +601,51 @@ if df is not None and question_cols:
             prog.empty()
             return results
 
+        # Expand selected columns into "virtual units": multi-response columns become N sub-units.
+        # Multi-response splitting uses Gemini so brand/place names with spaces stay intact
+        # (e.g. "Eurostore malvesa" → ["Eurostore","malvesa"]; "Auto Star Mitrovica" → one item).
+        virtual_units = []
         for col in question_cols:
-            base_cats = [c.strip() for c in st.session_state.question_categories[col].splitlines() if c.strip()]
+            multi_info = st.session_state.question_multi_response.get(col)
+            if multi_info:
+                n_resp = multi_info["n"]
+                q_label_for_split = st.session_state.question_labels.get(col, col)
+                with st.spinner(f"Duke ndarë **{col}** në deri në {n_resp} përgjigje me AI…"):
+                    sub_series_list = llm_split_cells(df[col], n_resp, q_label_for_split)
+                for i, sub in enumerate(sub_series_list):
+                    virtual_units.append({
+                        "source_col": col,
+                        "display_col": f"{col} (përgjigja {i+1}/{n_resp})",
+                        "output_col": f"{col}_{i+1}_grouped",
+                        "series": sub,
+                    })
+            else:
+                virtual_units.append({
+                    "source_col": col,
+                    "display_col": col,
+                    "output_col": f"{col}_grouped",
+                    "series": df[col],
+                })
 
-            with st.spinner(f"Duke procesuar **{col}**…"):
-                labels = categorize_column(col, base_cats, df[col])
+        def clean_label(l):
+            m = re.match(r"(?i)^new:\s*(.+)$", l)
+            return m.group(1).strip() if m else l
+
+        def normalize_label(l):
+            if l in ("999", "Error"):
+                return l
+            return l.rstrip(".")
+
+        for unit in virtual_units:
+            source_col = unit["source_col"]
+            display_col = unit["display_col"]
+            output_col = unit["output_col"]
+            series = unit["series"]
+
+            base_cats = [c.strip() for c in st.session_state.question_categories[source_col].splitlines() if c.strip()]
+
+            with st.spinner(f"Duke procesuar **{display_col}**…"):
+                labels = categorize_column(source_col, base_cats, series)
 
             # Detect high-frequency NEW categories
             new_labels = [l for l in labels if l.lower().startswith("new:")]
@@ -471,37 +653,21 @@ if df is not None and question_cols:
             promoted = [cat for cat, cnt in new_counts.items() if cnt >= new_cat_threshold]
 
             if promoted:
-                st.info(f"Kategori të reja të detektuara për **{col}**: {', '.join(promoted)} — duke ri-ekzekutuar me listën e përditësuar…")
+                st.info(f"Kategori të reja të detektuara për **{display_col}**: {', '.join(promoted)} — duke ri-ekzekutuar me listën e përditësuar…")
                 updated_cats = base_cats + promoted
-                # Only re-categorize responses that were tagged as NEW:
                 new_indices = [i for i, l in enumerate(labels) if l.lower().startswith("new:")]
                 if new_indices:
-                    # Build a series with only the NEW-tagged responses, rest as NaN
-                    partial_series = pd.Series([None] * len(df[col]), dtype=object)
+                    partial_series = pd.Series([None] * len(series), dtype=object)
                     for i in new_indices:
-                        partial_series.iloc[i] = df[col].iloc[i]
-                    partial_labels = categorize_column(col, updated_cats, partial_series)
-                    # Merge: only replace labels that were NEW:
+                        partial_series.iloc[i] = series.iloc[i]
+                    partial_labels = categorize_column(source_col, updated_cats, partial_series)
                     for i in new_indices:
                         labels[i] = partial_labels[i]
 
-            # Clean up any remaining "NEW: X" labels
-            def clean_label(l):
-                m = re.match(r"(?i)^new:\s*(.+)$", l)
-                return m.group(1).strip() if m else l
-
             labels = [clean_label(l) for l in labels]
-
-            # Normalize categories: strip trailing punctuation, then merge duplicates
-            # e.g. "Electricity." → "Electricity", deduped against "Electricity"
-            def normalize_label(l):
-                if l in ("999", "Error"):
-                    return l
-                return l.rstrip(".")
-
             labels = [normalize_label(l) for l in labels]
 
-            # Build a canonical mapping: for each lowercased name, keep the first seen form
+            # Canonical mapping: for each lowercased name, keep the first seen form
             canonical = {}
             for l in labels:
                 if l in ("999", "Error"):
@@ -516,10 +682,10 @@ if df is not None and question_cols:
             if len(label_counts) > max_categories:
                 top_cats = {cat for cat, _ in label_counts.most_common(max_categories - 1)}
                 merged_count = sum(cnt for cat, cnt in label_counts.items() if cat not in top_cats)
-                st.info(f"**{col}**: {len(label_counts)} kategori u gjetën → duke bashkuar {len(label_counts) - len(top_cats)} kategori me frekuencë të ulët ({merged_count} përgjigje) në 'Other'")
+                st.info(f"**{display_col}**: {len(label_counts)} kategori u gjetën → duke bashkuar {len(label_counts) - len(top_cats)} kategori me frekuencë të ulët ({merged_count} përgjigje) në 'Other'")
                 labels = [l if l in top_cats or l in ("999", "Error") else "Other" for l in labels]
 
-            result_df[f"{col}_grouped"] = labels
+            result_df[output_col] = labels
 
         # ── Cost calculation ─────────────────────────────────────────────────
         total_cost = calculate_gemini_cost(token_counts["input"], token_counts["output"], model_id)
@@ -533,6 +699,10 @@ if df is not None and question_cols:
         st.session_state.results = {
             "result_df": result_df,
             "question_cols": list(question_cols),
+            "grouped_units": [
+                {"source_col": u["source_col"], "display_col": u["display_col"], "output_col": u["output_col"]}
+                for u in virtual_units
+            ],
             "id_col": id_col,
             "token_counts": dict(token_counts),
             "total_cost": total_cost,
@@ -547,19 +717,27 @@ if st.session_state.results is not None:
     result_df = res["result_df"]
 
     st.markdown("---")
-    for col in res["question_cols"]:
-        grouped_col = f"{col}_grouped"
+    grouped_units = res.get("grouped_units")
+    if not grouped_units:
+        grouped_units = [
+            {"source_col": col, "display_col": col, "output_col": f"{col}_grouped"}
+            for col in res["question_cols"]
+        ]
+    for unit in grouped_units:
+        source_col = unit["source_col"]
+        display_col = unit["display_col"]
+        grouped_col = unit["output_col"]
         if grouped_col not in result_df.columns:
             continue
-        st.success(f"Përfundoi: **{col}** → **{grouped_col}**")
-        st.subheader(f"Shpërndarja e kategorive — {col}")
+        st.success(f"Përfundoi: **{display_col}** → **{grouped_col}**")
+        st.subheader(f"Shpërndarja e kategorive — {display_col}")
         dist = result_df[grouped_col].value_counts().reset_index()
         dist.columns = ["Kategoria", "Numri"]
         dist["Përqindja"] = (dist["Numri"] / dist["Numri"].sum() * 100).round(1).astype(str) + "%"
         st.dataframe(dist, use_container_width=True, hide_index=True)
 
         st.dataframe(
-            result_df[[res["id_col"], col, grouped_col]].head(20),
+            result_df[[res["id_col"], source_col, grouped_col]].head(20),
             use_container_width=True,
         )
 
