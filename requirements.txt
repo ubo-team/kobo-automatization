@@ -15,4 +15,6 @@ google-auth
 gspread
 regex
 google-generativeai
+anthropic>=1.7
+pypdf
 numpy
