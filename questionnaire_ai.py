@@ -237,15 +237,6 @@ def _cached(source_blocks):
     return [{**b, "cache_control": {"type": "ephemeral"}} for b in source_blocks]
 
 
-def lines_to_docx(lines):
-    doc = Document()
-    for line in lines:
-        doc.add_paragraph(line)
-    buf = BytesIO()
-    doc.save(buf)
-    return buf.getvalue()
-
-
 # ---------------------------------------------------------------------------
 # Step 1: questionnaire -> tagged lines
 # ---------------------------------------------------------------------------
@@ -264,7 +255,7 @@ Output one item per line and never split a question's text across lines.
 
 Question line: `<number>. <question text> <tags>`. Every question line needs exactly one type tag; tags go at the end of the line.
 
-Numbers: keep the questionnaire's question ID when it is letters+digits with optional trailing letters (A1, Q12, B2a, CONS1, EMP13A) or a plain integer (5). Otherwise normalise it: drop underscores and other separators (ECE_M01 → ECEM01, WORK_R1 → WORKR1), put "Q" before IDs that start with a digit (3a → Q3a) and turn dotted sub-numbers into letters (3.1 → Q3a, 3.2 → Q3b). If the questionnaire has no numbering, number the questions 1, 2, 3, … Numbers must be unique. Never leave out a question because its ID or structure is unclear: give it a number (e.g. the previous question's ID plus a letter: ECE1a) and mention it in `notes`.
+Numbers: copy the questionnaire's question ID exactly as it is written, without changing, normalising or renumbering it: 5.1 stays 5.1, 3a stays 3a, ECE_M01 stays ECE_M01, Q12 stays Q12. The ID is written once, at the start of the line, followed by a dot and a space (`5.1. <text>`), with no space inside the ID. If the questionnaire has no numbering, number the questions 1, 2, 3, … Keep an ID even when another module uses the same one; the program makes the variable names unique. Never leave out a question because its ID or structure is unclear: give it a number (e.g. the previous question's ID plus a letter: ECE1a) and mention it in `notes`.
 
 Type tags:
 - `[single]` one answer from a list. The answer options follow, one per line.
@@ -277,13 +268,13 @@ Type tags:
 - `[scale S(min label)-E(max label)]` a single rating from S to E, e.g. `[scale 1(Aspak dakord)-5(Plotësisht dakord)]`; labels are optional: `[scale 0-10]`. No option lines follow.
 - `[matrix single N]` a grid of statements that share the same N answer columns, one answer per row. Next come exactly N lines with the column labels, then one line per row statement. Use `[matrix multiple N]` when a row allows several columns. A table of statements × agreement scale is a matrix. When a series of separately numbered questions shares one answer list (ASSET1A, ASSET1B, …), keep them as separate `[single]` questions so each keeps its own number.
 - `[ranking N]` the respondent ranks their top N choices. Options follow, one per line.
-- `[note]` text shown without an answer (introduction, consent text, a read-aloud passage, a section introduction). Untagged lines after it are appended to the note until the next tagged line.
+- `[note]` text shown without an answer (introduction, consent text, a read-aloud passage, a section introduction). Untagged lines after it are appended to the note until the next tagged line. A note stands exactly where the questionnaire prints it: an introduction goes before the questions it introduces (right after its `[group]` / `[section]` line when it opens a module or section), never after them.
 - `[other]` something that should not be coded as a question: interviewer name/ID, date, GPS, start time, respondent name, phone number or address (the form adds these automatically), or items filled in from office records. The line is skipped and listed for the user.
 
 Optional extra tags on question lines:
 - `[name: variable_name]` when the questionnaire gives a variable name for the question (e.g. `hh_study_child_confirm` under the ID CONS1). Copy it exactly.
 - `[random]` when the questionnaire says to rotate or randomise the options.
-- `[hint: text]` an interviewer instruction for that question ("Read out the options", "Do not read"). No square brackets inside the hint.
+- `[hint: text]` an interviewer instruction for that question that the questionnaire does not print in square brackets ("Read out the options", "Do not read"). No square brackets inside the hint; bracketed instructions stay in the text (see markers below).
 
 Option lines contain only the option text, e.g. `Po`: no option numbers, letters, checkboxes or dotted leaders. Keep the questionnaire's order and keep options like "Don't know" / "Refused" when listed. Tags allowed on option lines:
 - `[code: X]` when the questionnaire gives answer codes (Yes 1, No 0, Don't know -98, Refused -99, Other 96 …): copy each code exactly, on every option of that question. When the questionnaire states a general coding convention (e.g. "1 = Yes; 0 = No", "-98 = Don't know; -99 = Refused"), apply it to options that have no code of their own. Without any codes or convention, leave this tag out; options are then numbered 1, 2, 3, …
@@ -293,7 +284,9 @@ An option asking the respondent to specify ("Other, specify", "Tjetër (specifik
 
 Special answers for `[numeric]`, `[decimal]`, `[date]`, `[time]` and `[text]`: when the questionnaire lists answers such as "Don't know -98", "Refused -99" or "Nothing 0" next to the value, put them as option lines after the question, each with its `[code: X]`. If the questionnaire also lists the value itself as an option with a code (e.g. "0–7 days 1", "Amount in euros 1"), include that line too and add `[value]` to it. Only lines with `[code: X]` or `[value]` are read as special answers.
 
-Placeholders in question text such as [STUDY CHILD NAME] must use parentheses: (STUDY CHILD NAME). Square brackets are only allowed for tags.
+Placeholders in question text such as [STUDY CHILD NAME] (text the interviewer replaces) must use parentheses: (STUDY CHILD NAME).
+
+Bracketed markers that the questionnaire prints in its text, such as [READ ALOUD], [LEXO ME ZË TË LARTË], [INTERVIEWER NOTE: do not read the options], [SHËNIM I INTERVISTUESIT], [SECTION] or [SEKSIONI], are shown to the interviewer in the form, so copy them with their brackets and wording exactly where they stand: in the question, note, option or section text, after the question number, in every language, e.g. `A5. [READ ALOUD] Now I will read some statements. || [LEXO ME ZË TË LARTË] Tani do t'ju lexoj disa pohime. [note]`. Do not move them into a `[hint: …]`, and do not drop them. A marker is text, not a tag: tags still go at the end of the line. When the marker is only a single word that is also a tag word (section, note, text, other, single, multiple, group, repeat, random, value, date, time …), write it with `!` after the opening bracket so it is not read as a tag: `[!SECTION]`, `[!NOTE]`; the form shows it as [SECTION], [NOTE]. A heading marked with such a marker becomes a `[section]` line that keeps the marker in its title, e.g. `[section] [!SECTION] Informed consent || [SEKSIONI] Pëlqimi i informuar`.
 
 ## Structure
 
@@ -307,7 +300,7 @@ Any other untagged line that is not an option, matrix column, matrix row or note
 ## Routing
 
 Filters are built in a later step from routing notes you copy next to the place they apply. Capture every routing instruction of the questionnaire this way; it is checked automatically:
-- `[ask if: <condition>]` on a question, `[group]`, `[section]` or `[repeat]` line when the questionnaire says who is asked there ("Ask if: If CONS1 = Yes", "Filter: employed respondents", a [ROUTING] row over a block, "Only for treatment households"). Write the condition in the first language, with question IDs normalised as in your lines (ECE_M01 → ECEM01), e.g. `[ask if: If CONS1 = Yes]`. Copy it as written even when it is incomplete (e.g. "ROST3 >= ." with the number missing) and mention that in `notes`. Leave out notes that do not restrict who is asked ("Ask once", "Ask first", "Ask all study children", "Ask once per activity").
+- `[ask if: <condition>]` on a question, `[group]`, `[section]` or `[repeat]` line when the questionnaire says who is asked there ("Ask if: If CONS1 = Yes", "Filter: employed respondents", a [ROUTING] row over a block, "Only for treatment households"). Write the condition in the first language, with question IDs written as in your lines, e.g. `[ask if: If CONS1 = Yes]`. Copy it as written even when it is incomplete (e.g. "ROST3 >= ." with the number missing) and mention that in `notes`. Leave out notes that do not restrict who is asked ("Ask once", "Ask first", "Ask all study children", "Ask once per activity").
 - `[skip: TARGET]` on an option line when choosing that option jumps to another question (">>END2", "Go to Q7"): TARGET is the question ID as written in your lines, or `END` for the end of the questionnaire. A jump printed after the option list that applies to several options goes on each of those options.
 - No square brackets inside these tags; use parentheses.
 Keep all questions the routing refers to.
@@ -353,7 +346,7 @@ A5. How satisfied are you with public services? || Sa të kënaqur jeni me shër
 [end group]
 [group] MODULE B: HOUSEHOLD || MODULI B: FAMILJA
 [section] Household roster || Lista e familjes
-First, I would like to list everyone who lives here. || Së pari, dua të listoj të gjithë ata që jetojnë këtu. [note]
+[READ ALOUD] First, I would like to list everyone who lives here. || [LEXO ME ZË TË LARTË] Së pari, dua të listoj të gjithë ata që jetojnë këtu. [note]
 B0. How many people live in this household? || Sa persona jetojnë në këtë familje? [numeric] [name: hh_size]
 [repeat: B0] Household members || Anëtarët e familjes
 B1. What is the name of the member? || Si quhet anëtari? [text] [name: member_name]
@@ -382,6 +375,258 @@ def convert_questionnaire(client, source_blocks):
     if not lines:
         raise AIError("Claude nuk gjeti pyetje në dokument.")
     return lines, data["notes"], usage
+
+
+# ---------------------------------------------------------------------------
+# Step 1b: translation check of the tagged lines
+# ---------------------------------------------------------------------------
+
+LANG_SEP = "||"
+TAG_RE = re.compile(r'\[([^\]]*)\]')
+_TAG_WORDS = {"single", "multiple", "text", "string", "numeric", "decimal", "date", "time", "note", "other",
+              "random", "exclusive", "value", "group", "end group", "end_group", "repeat", "end repeat",
+              "end_repeat", "section", "seksion"}
+_TAG_PATTERN = re.compile(r'(hint|name|code|skip|ask if|repeat|languages?)\s*:|matrix\s+(single|multiple)\s+\d'
+                          r'|ranking\s+\d|scale\s*\d', flags=re.IGNORECASE)
+
+
+def is_tag(tag):
+    """True for the program's tags ([single], [hint: …], [scale 1-5] …). Any other bracketed text, such as
+    [READ ALOUD] or [INTERVIEWER NOTE], is part of the question text and is kept in the form."""
+    tag = tag.strip()
+    return tag.lower() in _TAG_WORDS or _TAG_PATTERN.match(tag) is not None
+
+
+def strip_tags(line):
+    """The line without the program's tags; bracketed markers such as [READ ALOUD] stay."""
+    text = TAG_RE.sub(lambda m: " " if is_tag(m.group(1)) else m.group(0), line)
+    return re.sub(r'\s{2,}', ' ', text).strip()
+
+
+def unescape_markers(text):
+    """[!NOTE] is how a marker whose word is also a tag is written; in the form it reads [NOTE]."""
+    return text.replace("[!", "[") if isinstance(text, str) else text
+
+
+def declared_languages(lines):
+    """Languages of a [languages: English, Albanian] line; [] for a single-language questionnaire."""
+    for line in lines:
+        m = re.match(r'^\s*\[languages?:\s*(.+?)\]\s*$', line, flags=re.IGNORECASE)
+        if m:
+            langs = [l.strip() for l in re.split(r'\|\||,', m.group(1)) if l.strip()]
+            return langs if len(langs) > 1 else []
+    return []
+
+
+def _untranslated(text, languages):
+    """Languages (after the first) whose part of a `a || b` text is missing, empty or a copy of the first."""
+    parts = [p.strip() for p in text.split(LANG_SEP)]
+    first = re.sub(r'^\w+[.)]\s+', '', parts[0]).strip().lower()   # the question number is only in the first part
+    missing = []
+    for k, lang in enumerate(languages[1:], start=1):
+        part = parts[k] if k < len(parts) else ""
+        # identical short texts ("Internet", "Facebook") are normal; identical sentences are not
+        if not part or (part.lower() == first and len(first.split()) >= 3):
+            missing.append(lang)
+    return missing
+
+
+def check_translations(lines):
+    """Text lines of a multi-language questionnaire that are missing a language (or keep the first
+    language's text in its place). Returns [{"index", "languages", "line"}]; [] with a single language."""
+    languages = declared_languages(lines)
+    if not languages:
+        return []
+    issues = []
+    for i, line in enumerate(lines):
+        missing = set()
+        text = strip_tags(line)
+        if text:
+            missing.update(_untranslated(text, languages))
+        for tag in TAG_RE.findall(line):
+            m = re.match(r'\s*hint\s*:\s*(.+)', tag, flags=re.IGNORECASE)
+            if m:
+                missing.update(_untranslated(m.group(1), languages))
+        if missing:
+            issues.append({"index": i, "languages": [l for l in languages if l in missing], "line": line})
+    return issues
+
+
+def _structure(line):
+    """What a translation fix must not change: the question number and the tags (without their texts)."""
+    tags = [re.sub(r'\([^)]*\)', '', t).strip().lower() for t in TAG_RE.findall(line)
+            if is_tag(t) and not re.match(r'\s*hint\s*:', t, flags=re.IGNORECASE)]
+    tags = [t.split(":")[0] if LANG_SEP in t else t for t in tags]
+    number = re.match(r'^\s*(\w+)[.)]\s', strip_tags(line))
+    return tags, number.group(1) if number else None
+
+
+TRANSLATION_SYSTEM = INPUT_NOTE + """
+
+A multi-language questionnaire was converted into a line-based tagged format. In that format every text (question, option, note, hint, group/section title, matrix column and row) is written as `<language 1 text> || <language 2 text> || …` in the order of the `[languages: …]` line; tags are written once at the end of the line (at the start for `[group]`, `[section]` and `[repeat]` lines), and the question number only once, at the start.
+
+An automatic check found lines where a language is missing or still holds the first language's text. For each listed line, return the complete corrected line with the text of every language filled in, taken from the questionnaire. Change nothing else: keep the question number, the first language's text, all tags and their order exactly as they are.
+
+Copy each language's text as the questionnaire writes it. Only when the questionnaire truly has no text in that language for this item, translate it yourself, and list those lines in `notes` (in Albanian) so the user can have them checked.
+
+A line whose text really is the same in every language (a brand name, a number) can be returned unchanged."""
+
+TRANSLATION_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "fixes": {"type": "array", "items": {
+            "type": "object",
+            "properties": {"index": {"type": "integer"}, "line": {"type": "string"}},
+            "required": ["index", "line"],
+            "additionalProperties": False,
+        }},
+        "notes": {"type": "array", "items": {"type": "string"}},
+    },
+    "required": ["fixes", "notes"],
+    "additionalProperties": False,
+}
+
+
+def repair_translations(client, source_blocks, lines, rounds=2):
+    """Fills in missing languages from the questionnaire and tests the lines again after every round.
+    Returns (lines, remaining issues, notes, cost)."""
+    lines = list(lines)
+    languages = declared_languages(lines)
+    issues = check_translations(lines)
+    notes, cost = [], 0.0
+    for _ in range(rounds):
+        if not issues:
+            break
+        listed = "\n".join(f"{p['index']}: {p['line']}    <-- mungon: {', '.join(p['languages'])}" for p in issues)
+        numbered = "\n".join(f"{i}: {line}" for i, line in enumerate(lines))
+        content = _cached(source_blocks) + [{"type": "text", "text":
+            f"Languages, in order: {', '.join(languages)}\n\n"
+            f"<converted_lines>\n{numbered}\n</converted_lines>\n\n"
+            f"Lines to fix (index: line <-- missing languages):\n<to_fix>\n{listed}\n</to_fix>"}]
+        data, usage = _call_claude(client, TRANSLATION_SYSTEM, content, TRANSLATION_SCHEMA,
+                                   max_tokens=64000, effort=CONVERT_EFFORT)
+        cost += estimate_cost(usage)
+        notes.extend(data["notes"])
+        wanted = {p["index"] for p in issues}
+        for fix in data["fixes"]:
+            i, new = fix["index"], fix["line"].strip()
+            # a fix that changes the number or the tags would change the form, not only its texts
+            if i in wanted and new and _structure(new) == _structure(lines[i]):
+                lines[i] = new
+        issues = check_translations(lines)
+    return lines, issues, notes, cost
+
+
+def translation_warnings(issues, limit=30):
+    """Messages for the lines that are still not translated."""
+    msgs = [f"Rreshti {p['index'] + 1} nuk ka tekst në {', '.join(p['languages'])}: `{p['line'][:90]}`"
+            for p in issues[:limit]]
+    if len(issues) > limit:
+        msgs.append(f"… dhe {len(issues) - limit} rreshta të tjerë pa përkthim.")
+    return msgs
+
+
+# ---------------------------------------------------------------------------
+# Step 1c: second check of the notes (introductions, read-aloud text) and their place
+# ---------------------------------------------------------------------------
+
+NOTES_SYSTEM = INPUT_NOTE + """
+
+A questionnaire was converted into a line-based tagged format. `[note]` lines hold text shown without an answer: introductions, consent text, read-aloud passages, section introductions; untagged lines right after a `[note]` line continue that note. `[group]` / `[section]` lines open a module / section, `[end group]` closes a module.
+
+Check every note against the questionnaire, in two ways:
+1. Place: a note must stand exactly where the questionnaire prints it. An introduction comes before the questions it introduces, right after the `[group]` / `[section]` line when it opens a module or section; a note placed after the questions it introduces, in another module, or at the end is misplaced. For each misplaced note give `move` with `index` (the index of its `[note]` line; its continuation lines move with it) and `before` (the index of the line it must stand right before, as numbered in the converted lines; the number of lines to put it at the very end).
+2. Completeness: introductions, consent text or read-aloud passages of the questionnaire that are missing from the lines. For each give `insert` with `before` and `line`: the complete `[note]` line in the same format as the other lines (all languages separated by ` || ` when there is a `[languages: …]` line, the `[note]` tag at the end). Do not add interviewer instructions that belong to a single question, titles, or text already present.
+
+Report only real problems; when every note is in place and complete, return empty lists. In `notes`, describe (in Albanian) each change in one short sentence."""
+
+NOTES_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "move": {"type": "array", "items": {
+            "type": "object",
+            "properties": {"index": {"type": "integer"}, "before": {"type": "integer"}},
+            "required": ["index", "before"],
+            "additionalProperties": False,
+        }},
+        "insert": {"type": "array", "items": {
+            "type": "object",
+            "properties": {"before": {"type": "integer"}, "line": {"type": "string"}},
+            "required": ["before", "line"],
+            "additionalProperties": False,
+        }},
+        "notes": {"type": "array", "items": {"type": "string"}},
+    },
+    "required": ["move", "insert", "notes"],
+    "additionalProperties": False,
+}
+
+
+def _is_note(line):
+    return any(t.strip().lower() == "note" for t in TAG_RE.findall(line))
+
+
+def _note_block(lines, i):
+    """Indexes of a note line and the untagged lines that continue it."""
+    end = i + 1
+    while end < len(lines) and not any(is_tag(t) for t in TAG_RE.findall(lines[end])):
+        end += 1
+    return list(range(i, end))
+
+
+def _apply_note_fixes(lines, moves, inserts):
+    """Moves note blocks and inserts missing notes; indexes refer to `lines` before any change.
+    Returns (new lines, number of changes)."""
+    items = list(enumerate(lines))              # (original index, line); inserted lines have index None
+    changes = 0
+
+    def position(orig):
+        if orig >= len(lines):
+            return len(items)
+        return next((p for p, (o, _) in enumerate(items) if o == orig), None)
+
+    for mv in moves:
+        i, before = mv["index"], mv["before"]
+        if not (0 <= i < len(lines)) or not _is_note(lines[i]) or not (0 <= before <= len(lines)):
+            continue
+        block = set(_note_block(lines, i))
+        if before in block or before == max(block) + 1:
+            continue                              # already there
+        moved = [it for it in items if it[0] in block]
+        items = [it for it in items if it[0] not in block]
+        p = position(before)
+        if p is None:
+            items.extend(moved)                   # target vanished; keep the note rather than lose it
+            continue
+        items[p:p] = moved
+        changes += 1
+    for ins in inserts:
+        line, before = ins["line"].strip(), ins["before"]
+        if not line or not _is_note(line) or not (0 <= before <= len(lines)):
+            continue
+        p = position(before)
+        items.insert(len(items) if p is None else p, (None, line))
+        changes += 1
+    return [line for _, line in items], changes
+
+
+def review_notes(client, source_blocks, lines, rounds=2):
+    """Second check of the notes against the questionnaire: misplaced notes are moved, missing ones added,
+    and the result is checked again until nothing changes. Returns (lines, notes, cost)."""
+    lines = list(lines)
+    notes, cost = [], 0.0
+    for _ in range(rounds):
+        numbered = "\n".join(f"{i}: {line}" for i, line in enumerate(lines))
+        content = _cached(source_blocks) + [{"type": "text", "text":
+            f"<converted_lines>\n{numbered}\n</converted_lines>\n\nCheck the notes of the converted lines."}]
+        data, usage = _call_claude(client, NOTES_SYSTEM, content, NOTES_SCHEMA,
+                                   max_tokens=32000, effort=CONVERT_EFFORT)
+        cost += estimate_cost(usage)
+        lines, changes = _apply_note_fixes(lines, data["move"], data["insert"])
+        if not changes:
+            break
+        notes.extend(data["notes"])
+    return lines, notes, cost
 
 
 # ---------------------------------------------------------------------------

@@ -26,6 +26,40 @@ with st.sidebar:
 st.title("Gjenero XLS")
 st.markdown("Ngarko pyetësorin dhe gjenero formularin XLS për përdorim në Kobo Toolbox.")
 
+class CachedFile:
+    """Stand-in for an UploadedFile, rebuilt from the copy kept in session_state."""
+    def __init__(self, name, data):
+        self.name = name
+        self._data = data
+
+    def getvalue(self):
+        return self._data
+
+
+def _sync_upload_cache(key):
+    """Runs only when the user uploads or removes a file, not when the widget is reset by a rerun."""
+    f = st.session_state.get(key)
+    if f is None:
+        st.session_state.pop(key + "_cache", None)
+    else:
+        st.session_state[key + "_cache"] = CachedFile(f.name, f.getvalue())
+
+
+def cached_file_uploader(label, types, key):
+    """File uploader whose file survives switching the options above it (Streamlit drops the widget's file then)."""
+    uploaded = st.file_uploader(label, type=types, key=key, on_change=_sync_upload_cache, args=(key,))
+    if uploaded is not None:
+        return uploaded
+    cached = st.session_state.get(key + "_cache")
+    if cached is not None:
+        col_info, col_btn = st.columns([5, 1])
+        col_info.caption(f"📄 Skedari i ngarkuar më parë: **{cached.name}**")
+        if col_btn.button("Hiq", key=key + "_clear"):
+            st.session_state.pop(key + "_cache", None)
+            st.rerun()
+    return cached
+
+
 WORKFLOW_GENERATE = "Gjenero pyetësorin"
 WORKFLOW_CHECK = "Kontrollo pyetësorin"
 workflow = st.radio("Mënyra e punës:", [WORKFLOW_GENERATE, WORKFLOW_CHECK], index=0)
@@ -37,9 +71,8 @@ uploaded_file = None
 questionnaire_kind = SOURCE_TAGGED
 if workflow == WORKFLOW_GENERATE:
     questionnaire_kind = st.radio("Pyetësori që do të ngarkosh:", [SOURCE_TAGGED, SOURCE_PLAIN], index=0)
-    uploaded_file = st.file_uploader(
-        "Zgjidh pyetësorin:",
-        type=["docx"] if questionnaire_kind == SOURCE_TAGGED else qai.SOURCE_TYPES)
+    # One widget for both kinds, so switching the kind does not recreate it; the kind is validated below
+    uploaded_file = cached_file_uploader("Zgjidh pyetësorin:", qai.SOURCE_TYPES, "upload_questionnaire")
 
 STRUCTURE_TAGS = {
     "group": "group", "end group": "end group", "end_group": "end group",
@@ -49,7 +82,7 @@ STRUCTURE_TAGS = {
 STRUCTURE_TYPES = ("group", "end group", "repeat", "end repeat", "languages", "section")
 # Answer types that can be followed by special-code options (e.g. Don't know [code: -98])
 VALUE_TYPES = {"numeric": "integer", "decimal": "decimal", "date": "date", "time": "time", "text": "text", "string": "text"}
-LANG_SEP = "||"
+LANG_SEP = qai.LANG_SEP
 LANGUAGE_CODES = {
     "english": "en", "albanian": "sq", "shqip": "sq", "serbian": "sr", "srpski": "sr", "macedonian": "mk",
     "turkish": "tr", "bosnian": "bs", "croatian": "hr", "montenegrin": "cnr", "romani": "rom",
@@ -73,17 +106,10 @@ RANKING_LABELS_EN = [
     "Eighteenth choice", "Nineteenth choice", "Twentieth choice", "Extra"
 ]
 EXCLUSIVE_CODES = ("-97", "-98", "-99")
-CODING_ORIGINAL = "Ruaj numërimin origjinal si në Word (A1, B2a, C1, …)"
+CODING_ORIGINAL = "Ruaj numërimin origjinal si në pyetësor (A1, B2a, 5.1, …)"
 CODING_VARIABLES = "Emrat e variablave nga pyetësori (p.sh. hh_study_child_confirm)"
 
-def parse_languages(lines):
-    """Languages declared with a [languages: English, Albanian] line; [] for a single-language questionnaire."""
-    for line in lines:
-        m = re.match(r'^\s*\[languages?:\s*(.+?)\]\s*$', line, flags=re.IGNORECASE)
-        if m:
-            langs = [l.strip() for l in re.split(r'\|\||,', m.group(1)) if l.strip()]
-            return langs if len(langs) > 1 else []
-    return []
+parse_languages = qai.declared_languages
 
 def language_column(name):
     code = LANGUAGE_CODES.get(name.strip().lower())
@@ -110,7 +136,7 @@ def sanitize_name(label):
 
 def extract_tags(text):
     """Extract all bracketed tags like [random], [hint: ...], [single], [scale ...] etc."""
-    return re.findall(r'\[(.*?)\]', text, flags=re.IGNORECASE)
+    return [t for t in re.findall(r'\[(.*?)\]', text) if qai.is_tag(t)]
 
 def parse_question_tags(tags):
     """Classify tags into type, parameters, and hint."""
@@ -174,10 +200,13 @@ def parse_question_tags(tags):
     return q_type, matrix_count, parameters, hint
 
 def strip_type(text):
-    return re.sub(r'\s*\[.*?\]\s*', '', text).strip()
+    """Removes the program's tags; markers such as [READ ALOUD] stay in the text."""
+    return qai.strip_tags(text)
 
 def extract_question_number_and_text(line):
-    match = re.match(r'^([A-Z]+\d+[a-zA-Z\.]*|\d+)[\.\)]?\s*(.+)', line.strip())
+    # IDs as the questionnaire writes them: 5, 5.1, 5.1.2, 3a, Q3.1, B2a, EMP13A, ECE_M01, WORK-R1
+    match = re.match(r'^((?:[A-Z]+[_\-]?)*\d+(?:[._\-]?\d+|[a-zA-Z](?![a-z]))*)(?:[\.\):]\s*|\s+)(.+)',
+                     line.strip())
     if match:
         number = match.group(1)
         text = match.group(2)
@@ -187,7 +216,8 @@ def extract_question_number_and_text(line):
     return None, line
 
 def clean_label_prefix(text):
-    text = re.sub(r'^[\(\[]?[a-zA-Z0-9]+[\.\)\]]\s*', '', text)
+    # option numbering such as "1.", "a)", "(b)", "[2]"; a marker like [READ] is text and stays
+    text = re.sub(r'^(\[[a-zA-Z0-9]{1,2}\]|\(?[a-zA-Z0-9]+[\.\)])\s*', '', text)
     text = re.sub(r'[?:]+', '', text)
     text = re.sub(r'[_\s]{2,}', '', text)
     return text.strip()
@@ -312,14 +342,18 @@ def generate_qname(qnum, q_index, coding_mode, var_name=None):
         return f"P{q_index}", q_index + 1
 
     qnum_clean = qnum.rstrip('.')
+    # The original ID as a valid XLSForm name: it must start with a letter, so 5.1 becomes Q5.1
+    original_name = xls_name(qnum_clean).lstrip('_')
+    if not re.match(r'^[A-Za-z]', original_name):
+        original_name = f"Q{original_name}"
 
     # Case 2: D-questions → ALWAYS preserved
     if qnum_clean.upper().startswith("D"):
-        return qnum_clean, q_index
+        return original_name, q_index
 
     # Case 3: User wants original numbering (also the fallback for questions without a variable name)
     if coding_mode in (CODING_ORIGINAL, CODING_VARIABLES):
-        return qnum_clean, q_index
+        return original_name, q_index
 
     # Case 4: User wants Q1, Q2…
     if coding_mode == "Q1, Q2, Q3, ...":
@@ -421,6 +455,7 @@ def generate_xlsform(input_docx, output_xlsx, coding_mode, data_method=True, sel
     structure_stack = []
     structure_index = 0
     qname_by_ref = {}      # question number / variable name → form name, for [repeat: ROST0]
+    used_qnames = set()
 
     used_codes = {}   # list_name -> choice names already used
 
@@ -547,6 +582,15 @@ def generate_xlsform(input_docx, output_xlsx, coding_mode, data_method=True, sel
             qname, q_index = generate_qname(qnum, q_index, coding_mode, var_name)
 
             qname = qname.rstrip('.')
+            # The same ID in two modules (e.g. 5.1 in module 3 and in module 7): Kobo needs unique names
+            if qname in used_qnames:
+                base, n = qname, 2
+                while f"{base}_{n}" in used_qnames:
+                    n += 1
+                qname = f"{base}_{n}"
+                if warnings is not None:
+                    warnings.append(f"Pyetja {qnum or base} përsëritet në pyetësor; herën e dytë u emërtua {qname}.")
+            used_qnames.add(qname)
             required = "true"
             if qnum:
                 qname_by_ref[qnum] = qname
@@ -852,6 +896,7 @@ def generate_xlsform(input_docx, output_xlsx, coding_mode, data_method=True, sel
             for key, value in row.items():
                 if key in ("label", "hint", "constraint_message"):
                     values = value if isinstance(value, list) else [value] * n_lang
+                    values = [qai.unescape_markers(v) for v in values]
                     if lang_columns:
                         for col, v in zip(lang_columns, values):
                             new[f"{key}::{col}"] = v
@@ -995,10 +1040,10 @@ def show_filter_results(result):
 
 
 def render_filter_check():
-    xls_file = st.file_uploader("Ngarko formularin XLS (.xlsx):", type=["xlsx"], key="chk_xlsx_upload")
-    source_file = st.file_uploader(
+    xls_file = cached_file_uploader("Ngarko formularin XLS (.xlsx):", ["xlsx"], "chk_xlsx_upload")
+    source_file = cached_file_uploader(
         "Ngarko pyetësorin origjinal, me të cilin krahasohen filtrat (.docx, .xlsx, .pdf, .txt, .csv):",
-        type=qai.SOURCE_TYPES, key="chk_source_upload")
+        qai.SOURCE_TYPES, "chk_source_upload")
     if not xls_file or not source_file:
         return
     xls_bytes = xls_file.getvalue()
@@ -1089,6 +1134,9 @@ if uploaded_file:
 
     lines = None
     if questionnaire_kind == SOURCE_TAGGED:
+        if doc_lines is None:
+            st.error(f"Pyetësori i formatuar me tag-e duhet të jetë .docx. Për skedarë të tjerë zgjidh **'{SOURCE_PLAIN}'**.")
+            st.stop()
         if not doc_lines:
             st.error("Dokumenti nuk përmban tekst të lexueshëm.")
             st.stop()
@@ -1105,9 +1153,9 @@ if uploaded_file:
         if doc_lines and has_tags(doc_lines):
             st.info(f"Ky dokument duket se ka tag-e. Nëse është i formatuar tashmë, zgjidh më lart "
                     f"**'{SOURCE_TAGGED}'** për ta koduar drejtpërdrejt, pa kosto AI.")
-        st.info("AI do ta formatojë pyetësorin në formatin e programit "
-                "(llojet e pyetjeve, opsionet, seksionet).")
-        if st.button("Formato pyetësorin me AI"):
+        st.info("AI do ta formatojë pyetësorin (llojet e pyetjeve, opsionet, seksionet) "
+                "dhe do ta gjenerojë direkt formularin XLS.")
+        if st.button("Gjenero formularin XLS me AI"):
             client = get_claude_client()
             if client is None:
                 st.error("Mungon çelësi `ANTHROPIC_API_KEY` në secrets të aplikacionit.")
@@ -1118,25 +1166,40 @@ if uploaded_file:
                 except qai.AIError as e:
                     st.error(str(e))
                     st.stop()
+            format_cost = qai.estimate_cost(usage)
+            # Second check of the notes / introductions: each must stand where the questionnaire has it
+            with st.spinner("Claude po kontrollon për së dyti shënimet dhe fjalitë hyrëse..."):
+                try:
+                    ai_lines, notes_changes, notes_cost = qai.review_notes(client, source_blocks, ai_lines)
+                    ai_notes = ai_notes + notes_changes
+                    format_cost += notes_cost
+                except qai.AIError as e:
+                    st.warning(f"Kontrolli i dytë i shënimeve nuk u krye: {e}")
+            # Retest the translations: lines left in one language are filled in from the questionnaire
+            if qai.check_translations(ai_lines):
+                with st.spinner("Disa tekste nuk janë përkthyer – Claude po i plotëson dhe po i riteston..."):
+                    try:
+                        ai_lines, _, translation_notes, translation_cost = qai.repair_translations(
+                            client, source_blocks, ai_lines)
+                        ai_notes = ai_notes + translation_notes
+                        format_cost += translation_cost
+                    except qai.AIError as e:
+                        st.warning(f"Përkthimet që mungojnë nuk u plotësuan: {e}")
             for k in [k for k in st.session_state if k.startswith("gen_") and k != "gen_file_key"]:
                 del st.session_state[k]
             st.session_state["gen_tagged"] = "\n".join(ai_lines)
             st.session_state["gen_notes"] = ai_notes
-            st.session_state["gen_format_cost"] = qai.estimate_cost(usage)
+            st.session_state["gen_format_cost"] = format_cost
+            st.session_state["gen_autogenerate"] = True   # build the XLS right away, with the settings below
         if "gen_tagged" not in st.session_state:
             st.stop()
 
-        st.markdown("**Pyetësori i formatuar nga AI.** Kontrollo llojet e pyetjeve dhe korrigjo nëse duhet:")
-        tagged_text = st.text_area("Pyetësori i formatuar", key="gen_tagged", height=400,
-                                   label_visibility="collapsed")
+        with st.expander("Pyetësori i formatuar nga AI – korrigjo llojet e pyetjeve nëse duhet, "
+                         "pastaj rigjenero formularin"):
+            tagged_text = st.text_area("Pyetësori i formatuar", key="gen_tagged", height=400,
+                                       label_visibility="collapsed")
         lines = [line.strip() for line in tagged_text.split('\n') if line.strip()]
         show_notes("Shënime nga AI:", st.session_state.get("gen_notes"))
-        st.download_button(
-            label="Shkarko pyetësorin e formatuar (.docx)",
-            data=qai.lines_to_docx(lines),
-            file_name=f"{base_name}_formatuar.docx",
-            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-        )
 
     data_collection_method = st.selectbox(
     "Metoda e mbledhjes së të dhënave:",
@@ -1151,7 +1214,7 @@ if uploaded_file:
         "Q1, Q2, Q3, ...",
         CODING_ORIGINAL,
         CODING_VARIABLES
-    ], index=3 if has_variable_names else 0)
+    ], index=3 if has_variable_names else 2)
 
     # Extract question numbers (e.g., 1, D1, 2a, Q1.2 etc.)
     question_options = []
@@ -1219,7 +1282,8 @@ if uploaded_file:
 
     if data_collection_method:
         generate_button = st.button("Gjenero formularin XLS", disabled=block_generation)
-        if generate_button:
+        autogenerate = st.session_state.pop("gen_autogenerate", False) and not block_generation
+        if generate_button or autogenerate:
             generated_name = f"{base_name}_gjeneruar.xlsx"
             temp_xlsx_path = os.path.join(tempfile.gettempdir(), generated_name)
             error = None
@@ -1233,6 +1297,8 @@ if uploaded_file:
                                                warnings=generation_warnings, routing=routing)
                 except Exception as e:
                     error = str(e)
+            # Final translation test on the lines the form was built from
+            generation_warnings += qai.translation_warnings(qai.check_translations(lines))
 
             if error:
                 st.error(f"Gabimi: {error}")
