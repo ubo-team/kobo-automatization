@@ -30,11 +30,16 @@ WORKFLOW_GENERATE = "Gjenero pyetësorin"
 WORKFLOW_CHECK = "Kontrollo pyetësorin"
 workflow = st.radio("Mënyra e punës:", [WORKFLOW_GENERATE, WORKFLOW_CHECK], index=0)
 
+SOURCE_TAGGED = "I formatuar me tag-e (.docx)"
+SOURCE_PLAIN = "I paformatuar – AI e formaton (.docx, .xlsx, .pdf, .txt, .csv)"
+
 uploaded_file = None
+questionnaire_kind = SOURCE_TAGGED
 if workflow == WORKFLOW_GENERATE:
+    questionnaire_kind = st.radio("Pyetësori që do të ngarkosh:", [SOURCE_TAGGED, SOURCE_PLAIN], index=0)
     uploaded_file = st.file_uploader(
-        "Zgjidh pyetësorin: `.docx` me tag-e, ose çdo pyetësor `.docx`, `.xlsx`, `.pdf`, `.txt`, `.csv` pa tag-e (formatohet me AI):",
-        type=qai.SOURCE_TYPES)
+        "Zgjidh pyetësorin:",
+        type=["docx"] if questionnaire_kind == SOURCE_TAGGED else qai.SOURCE_TYPES)
 
 STRUCTURE_TAGS = {
     "group": "group", "end group": "end group", "end_group": "end group",
@@ -1076,16 +1081,31 @@ if uploaded_file:
         st.error(str(e))
         st.stop()
 
-    # A .docx that already has tags goes straight to the parser; anything else is formatted by AI first
-    lines = None
+    # The user says which kind of questionnaire it is; the tags are only used for a sanity check
+    doc_lines = None
     if uploaded_file.name.lower().endswith(".docx"):
         doc = docx2python(BytesIO(uploaded_content)).text
         doc_lines = [line.strip() for line in doc.split('\n') if line.strip()]
-        if has_tags(doc_lines):
-            lines = doc_lines
+
+    lines = None
+    if questionnaire_kind == SOURCE_TAGGED:
+        if not doc_lines:
+            st.error("Dokumenti nuk përmban tekst të lexueshëm.")
+            st.stop()
+        if not has_tags(doc_lines):
+            st.error(
+                "**Nuk u gjet asnjë tag në dokument** (p.sh. `[single]`, `[multiple]`, `[text]`, `[numeric]`). "
+                "Nëse pyetësori nuk është i formatuar, zgjidh më lart opsionin "
+                f"**'{SOURCE_PLAIN}'** që ta formatojë AI."
+            )
+            st.stop()
+        lines = doc_lines
 
     if lines is None:
-        st.info("Pyetësori nuk ka tag-e. AI do ta formatojë në formatin e programit "
+        if doc_lines and has_tags(doc_lines):
+            st.info(f"Ky dokument duket se ka tag-e. Nëse është i formatuar tashmë, zgjidh më lart "
+                    f"**'{SOURCE_TAGGED}'** për ta koduar drejtpërdrejt, pa kosto AI.")
+        st.info("AI do ta formatojë pyetësorin në formatin e programit "
                 "(llojet e pyetjeve, opsionet, seksionet).")
         if st.button("Formato pyetësorin me AI"):
             client = get_claude_client()
