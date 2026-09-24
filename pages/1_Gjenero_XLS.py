@@ -9,6 +9,7 @@ import gspread
 import hashlib
 from io import BytesIO
 import questionnaire_ai as qai
+import questionnaire_translate as qtr
 
 
 st.set_page_config(page_title="Gjenero XLS", layout="centered")
@@ -67,12 +68,52 @@ workflow = st.radio("Mënyra e punës:", [WORKFLOW_GENERATE, WORKFLOW_CHECK], in
 SOURCE_TAGGED = "I formatuar me tag-e (.docx)"
 SOURCE_PLAIN = "I paformatuar – AI e formaton (.docx, .xlsx, .pdf, .txt, .csv)"
 
+LANG_UI = {"Shqip": "Albanian", "Anglisht": "English", "Serbisht": "Serbian"}
+TR_READY = "Pyetësori është tashmë në këtë gjuhë"
+TR_AI = "Përkthe me AI (Gemini)"
+TR_MERGED = "Përkthimet janë të bashkuara në një skedar"
+TR_SEPARATE = "Përkthimet janë në skedarë të veçantë"
+
 uploaded_file = None
 questionnaire_kind = SOURCE_TAGGED
+form_languages = []        # English names, in the order of the form's label columns
+translation_mode = TR_READY
+translation_files = {}     # language -> uploaded file, for TR_SEPARATE
 if workflow == WORKFLOW_GENERATE:
     questionnaire_kind = st.radio("Pyetësori që do të ngarkosh:", [SOURCE_TAGGED, SOURCE_PLAIN], index=0)
-    # One widget for both kinds, so switching the kind does not recreate it; the kind is validated below
-    uploaded_file = cached_file_uploader("Zgjidh pyetësorin:", qai.SOURCE_TYPES, "upload_questionnaire")
+
+    st.markdown("Në cilat gjuhë do të gjenerohet formulari XLS? (mund të zgjidhni më shumë se një)")
+    lang_cols = st.columns(4)
+    ui_languages = [name for col, name in zip(lang_cols, LANG_UI)
+                    if col.checkbox(name, value=(name == "Shqip"), key=f"lang_{name}")]
+    if lang_cols[3].checkbox("Tjetër", key="lang_other"):
+        other = st.text_input("Shkruani gjuhën (për më shumë gjuhë, ndajini me presje):",
+                              placeholder="p.sh. Kroatisht", key="lang_other_text")
+        ui_languages += [l.strip() for l in other.split(",") if l.strip()]
+    form_languages = list(dict.fromkeys(LANG_UI.get(l) or qtr.language_name(l) for l in ui_languages))
+    ui_name = {lang: next((u for u in ui_languages if (LANG_UI.get(u) or qtr.language_name(u)) == lang), lang)
+               for lang in form_languages}
+
+    if not form_languages:
+        st.warning("Zgjidhni të paktën një gjuhë.")
+    else:
+        options = [TR_READY, TR_AI] if len(form_languages) == 1 else [TR_AI, TR_MERGED, TR_SEPARATE]
+        translation_mode = st.radio("Përkthimi:", options, key=f"tr_mode_{len(form_languages) > 1}")
+
+    if translation_mode == TR_SEPARATE:
+        st.caption(f"Skedari i gjuhës së parë ({ui_name[form_languages[0]]}) është pyetësori kryesor; "
+                   f"nga skedarët e tjerë merren vetëm përkthimet.")
+        for k, lang in enumerate(form_languages):
+            slug = re.sub(r'\W+', '_', lang.lower())
+            key = "upload_questionnaire" if k == 0 else f"upload_lang_{slug}"
+            f = cached_file_uploader(f"{ui_name[lang]}: ngarko pyetësorin", qai.SOURCE_TYPES, key)
+            if k == 0:
+                uploaded_file = f
+            elif f is not None:
+                translation_files[lang] = f
+    elif form_languages:
+        # One widget for both kinds, so switching the kind does not recreate it; the kind is validated below
+        uploaded_file = cached_file_uploader("Zgjidh pyetësorin:", qai.SOURCE_TYPES, "upload_questionnaire")
 
 STRUCTURE_TAGS = {
     "group": "group", "end group": "end group", "end_group": "end group",
@@ -937,6 +978,64 @@ def get_claude_client():
     return qai.make_client(api_key)
 
 
+def get_gemini_model():
+    """Gemini model for the translations (always Gemini); None without GEMINI_TRANSLATION_API_KEY."""
+    try:
+        qtr.configure(st.secrets["GEMINI_TRANSLATION_API_KEY"])
+    except Exception:
+        return None
+    try:
+        return st.secrets.get("GEMINI_MODEL", qtr.GEMINI_MODEL)   # optional, e.g. gemini-2.5-pro
+    except Exception:
+        return qtr.GEMINI_MODEL
+
+
+def language_note():
+    """Which languages Claude codes when it formats the questionnaire, from the user's choice."""
+    if translation_mode == TR_MERGED:
+        return (f"The questionnaire holds these languages: {', '.join(form_languages)}. Code exactly these, in this "
+                f"order, starting with the line `[languages: {', '.join(form_languages)}]`, and leave out any other "
+                f"language of the document.")
+    if translation_mode == TR_READY:
+        return (f"Code only the {form_languages[0]} text, as a single-language questionnaire (no `[languages: …]` "
+                f"line, no `||`). If the document has no {form_languages[0]} text, code its main language and say "
+                f"so in `notes`.")
+    return ("Code the questionnaire in a single language, its main (first) language, with no `[languages: …]` line "
+            "and no `||`; the other languages are added in a later step.")
+
+
+def apply_languages(lines):
+    """Brings the questionnaire to the chosen languages: keeps them (already translated / merged), translates it
+    with Gemini, or merges the translation files. Returns (lines, notes, cost); raises qai.AIError."""
+    if translation_mode in (TR_READY, TR_MERGED):
+        if translation_mode == TR_MERGED and not qai.declared_languages(lines) \
+                and not any(qai.LANG_SEP in l for l in lines):
+            raise qai.AIError("Pyetësori nuk ka përkthime të bashkuara (tekstet e gjuhëve të ndara me `||`). "
+                              f"Zgjidhni **'{TR_AI}'** ose **'{TR_SEPARATE}'**.")
+        new_lines, missing = qtr.select_languages(lines, form_languages)
+        if missing:
+            missing_ui = ", ".join(ui_name.get(l, l) for l in missing)
+            if translation_mode == TR_MERGED:
+                raise qai.AIError(f"Pyetësori nuk ka tekst në: {missing_ui}. Zgjidhni **'{TR_AI}'** që ta përkthejë "
+                                  f"Gemini, ose ngarkoni përkthimet si skedarë të veçantë.")
+            return new_lines, [f"Pyetësori nuk ka tekst në {missing_ui}; u përdor gjuha e parë e tij."], 0.0
+        return new_lines, [], 0.0
+
+    model = get_gemini_model()
+    if model is None:
+        raise qai.AIError("Mungon çelësi `GEMINI_TRANSLATION_API_KEY` në secrets të aplikacionit.")
+    if translation_mode == TR_AI:
+        return qtr.translate(lines, form_languages, model)
+    references = {}
+    for lang, f in translation_files.items():
+        text = qai.to_markdown(f.name, f.getvalue())
+        if not text or not text.strip():
+            raise qai.AIError(f"Skedari i gjuhës {ui_name.get(lang, lang)} nuk ka tekst që mund të lexohet "
+                              f"(PDF i skanuar?). Ngarkojeni si .docx, .xlsx ose .txt.")
+        references[lang] = text
+    return qtr.merge_translations(lines, form_languages, references, model)
+
+
 def reset_state_for_file(prefix, file_key):
     """Clears the results of a workflow when a different file is uploaded."""
     if st.session_state.get(prefix + "file_key") != file_key:
@@ -1115,10 +1214,19 @@ def render_filter_check():
 if workflow == WORKFLOW_CHECK:
     render_filter_check()
 
+if uploaded_file and translation_mode == TR_SEPARATE:
+    waiting = [ui_name[l] for l in form_languages[1:] if l not in translation_files]
+    if waiting:
+        st.info(f"Ngarkoni edhe pyetësorin në: {', '.join(waiting)}.")
+        st.stop()
+
 if uploaded_file:
     uploaded_content = uploaded_file.getvalue()
     reset_state_for_file("gen_", hashlib.sha1(uploaded_content).hexdigest())
     base_name = os.path.splitext(uploaded_file.name)[0]
+    # Everything that decides the form's languages; a result made for other settings is not reused
+    lang_config = hashlib.sha1("|".join([translation_mode] + form_languages + [
+        hashlib.sha1(f.getvalue()).hexdigest() for f in translation_files.values()]).encode()).hexdigest()
 
     try:
         source_blocks = qai.load_source(uploaded_file.name, uploaded_content)
@@ -1147,7 +1255,21 @@ if uploaded_file:
                 f"**'{SOURCE_PLAIN}'** që ta formatojë AI."
             )
             st.stop()
-        lines = doc_lines
+        # Languages: kept as they are, or translated / merged by Gemini once per setting
+        if st.session_state.get("gen_lang_config") != lang_config:
+            needs_ai = translation_mode in (TR_AI, TR_SEPARATE)
+            with st.spinner("Gemini po përkthen pyetësorin..." if needs_ai else "Po përgatiten gjuhët..."):
+                try:
+                    lang_result = apply_languages(doc_lines)
+                except qai.AIError as e:
+                    st.error(str(e))
+                    st.stop()
+            for k in ("gen_xlsx_data", "gen_filter_result"):   # the old form was made for other languages
+                st.session_state.pop(k, None)
+            st.session_state["gen_lang_config"] = lang_config
+            st.session_state["gen_lang_result"] = lang_result
+        lines, lang_notes, _ = st.session_state["gen_lang_result"]
+        show_notes("Shënime për gjuhët:", lang_notes)
 
     if lines is None:
         if doc_lines and has_tags(doc_lines):
@@ -1162,21 +1284,31 @@ if uploaded_file:
                 st.stop()
             with st.spinner("Claude po lexon pyetësorin dhe po përcakton llojet e pyetjeve..."):
                 try:
-                    ai_lines, ai_notes, usage = qai.convert_questionnaire(client, source_blocks)
+                    ai_lines, ai_notes, usage = qai.convert_questionnaire(client, source_blocks, language_note())
                 except qai.AIError as e:
                     st.error(str(e))
                     st.stop()
             format_cost = qai.estimate_cost(usage)
-            # Second check of the notes / introductions: each must stand where the questionnaire has it
-            with st.spinner("Claude po kontrollon për së dyti shënimet dhe fjalitë hyrëse..."):
+            # Second check against the questionnaire: every question present, notes / introductions in place
+            with st.spinner("Claude po kontrollon për së dyti që të gjitha pyetjet dhe shënimet janë në vendin e tyre..."):
                 try:
-                    ai_lines, notes_changes, notes_cost = qai.review_notes(client, source_blocks, ai_lines)
-                    ai_notes = ai_notes + notes_changes
-                    format_cost += notes_cost
+                    ai_lines, review_changes, review_cost = qai.review_completeness(client, source_blocks, ai_lines)
+                    ai_notes = ai_notes + review_changes
+                    format_cost += review_cost
                 except qai.AIError as e:
-                    st.warning(f"Kontrolli i dytë i shënimeve nuk u krye: {e}")
-            # Retest the translations: lines left in one language are filled in from the questionnaire
-            if qai.check_translations(ai_lines):
+                    st.warning(f"Kontrolli i dytë i pyetjeve dhe shënimeve nuk u krye: {e}")
+            # Languages: kept in the chosen order, or translated / merged by Gemini
+            with st.spinner("Gemini po përkthen pyetësorin..." if translation_mode in (TR_AI, TR_SEPARATE)
+                            else "Po përgatiten gjuhët..."):
+                try:
+                    ai_lines, lang_notes, lang_cost = apply_languages(ai_lines)
+                    ai_notes = ai_notes + lang_notes
+                    format_cost += lang_cost
+                except qai.AIError as e:
+                    st.error(str(e))
+                    st.stop()
+            # Retest the translations of a merged questionnaire: lines left in one language are filled in from it
+            if translation_mode == TR_MERGED and qai.check_translations(ai_lines):
                 with st.spinner("Disa tekste nuk janë përkthyer – Claude po i plotëson dhe po i riteston..."):
                     try:
                         ai_lines, _, translation_notes, translation_cost = qai.repair_translations(
@@ -1190,9 +1322,13 @@ if uploaded_file:
             st.session_state["gen_tagged"] = "\n".join(ai_lines)
             st.session_state["gen_notes"] = ai_notes
             st.session_state["gen_format_cost"] = format_cost
+            st.session_state["gen_lang_config"] = lang_config
             st.session_state["gen_autogenerate"] = True   # build the XLS right away, with the settings below
         if "gen_tagged" not in st.session_state:
             st.stop()
+        if st.session_state.get("gen_lang_config") != lang_config:
+            st.warning("Gjuhët ose mënyra e përkthimit ndryshuan pas formatimit. Klikoni përsëri "
+                       "**'Gjenero formularin XLS me AI'** që formulari të dalë në gjuhët e zgjedhura.")
 
         with st.expander("Pyetësori i formatuar nga AI – korrigjo llojet e pyetjeve nëse duhet, "
                          "pastaj rigjenero formularin"):
@@ -1328,6 +1464,8 @@ if uploaded_file:
             show_filter_results(st.session_state["gen_filter_result"])
 
     total_cost = st.session_state.get("gen_format_cost", 0.0)
+    if questionnaire_kind == SOURCE_TAGGED and st.session_state.get("gen_lang_result"):
+        total_cost += st.session_state["gen_lang_result"][2]   # Gemini translation
     if st.session_state.get("gen_filter_result"):
         total_cost += st.session_state["gen_filter_result"]["cost"]
     if total_cost:

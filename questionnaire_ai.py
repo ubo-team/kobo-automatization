@@ -269,7 +269,7 @@ Type tags:
 - `[matrix single N]` a grid of statements that share the same N answer columns, one answer per row. Next come exactly N lines with the column labels, then one line per row statement. Use `[matrix multiple N]` when a row allows several columns. A table of statements × agreement scale is a matrix. When a series of separately numbered questions shares one answer list (ASSET1A, ASSET1B, …), keep them as separate `[single]` questions so each keeps its own number.
 - `[ranking N]` the respondent ranks their top N choices. Options follow, one per line.
 - `[note]` text shown without an answer (introduction, consent text, a read-aloud passage, a section introduction). Untagged lines after it are appended to the note until the next tagged line. A note stands exactly where the questionnaire prints it: an introduction goes before the questions it introduces (right after its `[group]` / `[section]` line when it opens a module or section), never after them.
-- `[other]` something that should not be coded as a question: interviewer name/ID, date, GPS, start time, respondent name, phone number or address (the form adds these automatically), or items filled in from office records. The line is skipped and listed for the user.
+Never use `[other]` (it drops the question from the form). Every question of the questionnaire is coded, including the ones the interviewer fills in: country, questionnaire ID, interviewer ID or name, date and time of the interview, region, settlement, respondent name, phone number, address, items filled in from office records. Give them the matching type, e.g. a questionnaire / interviewer ID written in boxes → `[numeric]` (or `[text]` when it can hold letters), date with DAY / MONTH / YEAR boxes → `[date]`, time with HOUR / MINUTES boxes → `[time]`, a country or region from a list → `[single]` with its options, otherwise `[text]`. A section like "Section 0 – General information provided by the interviewer" is coded like any other section.
 
 Optional extra tags on question lines:
 - `[name: variable_name]` when the questionnaire gives a variable name for the question (e.g. `hh_study_child_confirm` under the ID CONS1). Copy it exactly.
@@ -367,8 +367,12 @@ CONVERT_SCHEMA = {
 }
 
 
-def convert_questionnaire(client, source_blocks):
-    content = source_blocks + [{"type": "text", "text": "Convert this questionnaire into the tagged line format."}]
+def convert_questionnaire(client, source_blocks, language_note=""):
+    """language_note: which languages to code (from the user's choice); replaces the rules under ## Languages."""
+    request = "Convert this questionnaire into the tagged line format."
+    if language_note:
+        request += "\n\nLanguages (this overrides the Languages section): " + language_note
+    content = source_blocks + [{"type": "text", "text": request}]
     data, usage = _call_claude(client, CONVERT_SYSTEM, content, CONVERT_SCHEMA, max_tokens=128000,
                                effort=CONVERT_EFFORT)
     lines = [line.strip() for line in data["lines"] if line.strip()]
@@ -527,43 +531,57 @@ def translation_warnings(issues, limit=30):
 
 
 # ---------------------------------------------------------------------------
-# Step 1c: second check of the notes (introductions, read-aloud text) and their place
+# Step 1c: second check against the questionnaire: every question present, notes in their place
 # ---------------------------------------------------------------------------
 
-NOTES_SYSTEM = INPUT_NOTE + """
+REVIEW_SYSTEM = INPUT_NOTE + """
 
-A questionnaire was converted into a line-based tagged format. `[note]` lines hold text shown without an answer: introductions, consent text, read-aloud passages, section introductions; untagged lines right after a `[note]` line continue that note. `[group]` / `[section]` lines open a module / section, `[end group]` closes a module.
+A questionnaire was converted into a line-based tagged format. Question lines start with the question ID and end with a type tag (`[single]`, `[multiple]`, `[text]`, `[numeric]`, `[decimal]`, `[date]`, `[time]`, `[scale …]`, `[matrix …]`, `[ranking N]`); option lines follow `[single]` / `[multiple]` / `[ranking]` questions. `[note]` lines hold text shown without an answer: introductions, consent text, read-aloud passages, section introductions; untagged lines right after a `[note]` line continue that note. `[group]` / `[section]` lines open a module / section, `[end group]` closes a module. Tags go at the end of the line; with a `[languages: …]` line, every text holds all languages separated by ` || `.
 
-Check every note against the questionnaire, in two ways:
-1. Place: a note must stand exactly where the questionnaire prints it. An introduction comes before the questions it introduces, right after the `[group]` / `[section]` line when it opens a module or section; a note placed after the questions it introduces, in another module, or at the end is misplaced. For each misplaced note give `move` with `index` (the index of its `[note]` line; its continuation lines move with it) and `before` (the index of the line it must stand right before, as numbered in the converted lines; the number of lines to put it at the very end).
-2. Completeness: introductions, consent text or read-aloud passages of the questionnaire that are missing from the lines. For each give `insert` with `before` and `line`: the complete `[note]` line in the same format as the other lines (all languages separated by ` || ` when there is a `[languages: …]` line, the `[note]` tag at the end). Do not add interviewer instructions that belong to a single question, titles, or text already present.
+Check the converted lines against the questionnaire, going through the questionnaire from its first section to its last:
+1. Missing questions: every question of the questionnaire must be in the lines, including the ones in the first sections that the interviewer fills in (country, questionnaire ID, interviewer ID, date and time of the interview …) and whole sections such as "Section 0". A line tagged `[other]` does not count: it is dropped from the form. For each missing question give `insert` with `before` (the index of the line it must stand right before; the number of lines for the very end) and `lines`: the question line followed by its option lines, in the same format as the other lines, keeping the questionnaire's ID. A missing section or module is inserted as one block that starts with its `[section]` / `[group]` line. List every `[other]` line you replace in `remove`.
+2. Notes in place: a note must stand exactly where the questionnaire prints it. An introduction comes before the questions it introduces, right after the `[group]` / `[section]` line when it opens a module or section; a note placed after the questions it introduces, in another module, or at the end is misplaced. For each misplaced note give `move` with `index` (the index of its `[note]` line; its continuation lines move with it) and `before`.
+3. Missing notes: introductions, consent text or read-aloud passages of the questionnaire that are missing. Insert each like a question, as a single `[note]` line. Do not add interviewer instructions that belong to a single question, titles, or text already present.
 
-Report only real problems; when every note is in place and complete, return empty lists. In `notes`, describe (in Albanian) each change in one short sentence."""
+Indexes are the numbers before the converted lines, all referring to the lines as given. Report only real problems; when everything is present and in place, return empty lists. In `notes`, describe (in Albanian) each change in one short sentence."""
 
-NOTES_SCHEMA = {
+REVIEW_SCHEMA = {
     "type": "object",
     "properties": {
+        "insert": {"type": "array", "items": {
+            "type": "object",
+            "properties": {"before": {"type": "integer"}, "lines": {"type": "array", "items": {"type": "string"}}},
+            "required": ["before", "lines"],
+            "additionalProperties": False,
+        }},
+        "remove": {"type": "array", "items": {"type": "integer"}},
         "move": {"type": "array", "items": {
             "type": "object",
             "properties": {"index": {"type": "integer"}, "before": {"type": "integer"}},
             "required": ["index", "before"],
             "additionalProperties": False,
         }},
-        "insert": {"type": "array", "items": {
-            "type": "object",
-            "properties": {"before": {"type": "integer"}, "line": {"type": "string"}},
-            "required": ["before", "line"],
-            "additionalProperties": False,
-        }},
         "notes": {"type": "array", "items": {"type": "string"}},
     },
-    "required": ["move", "insert", "notes"],
+    "required": ["insert", "remove", "move", "notes"],
     "additionalProperties": False,
 }
 
+_LINE_TYPES = ("single", "multiple", "text", "string", "numeric", "decimal", "date", "time", "note",
+               "matrix", "ranking", "scale", "group", "section", "seksion", "repeat")
+
+
+def _tag_words(line):
+    return [t.strip().lower() for t in TAG_RE.findall(line) if is_tag(t)]
+
 
 def _is_note(line):
-    return any(t.strip().lower() == "note" for t in TAG_RE.findall(line))
+    return "note" in _tag_words(line)
+
+
+def _starts_item(line):
+    """A line that can open an inserted block: a question, note, section, module or repeat."""
+    return any(w.split(":")[0].split()[0] in _LINE_TYPES for w in _tag_words(line) if w)
 
 
 def _note_block(lines, i):
@@ -574,16 +592,24 @@ def _note_block(lines, i):
     return list(range(i, end))
 
 
-def _apply_note_fixes(lines, moves, inserts):
-    """Moves note blocks and inserts missing notes; indexes refer to `lines` before any change.
-    Returns (new lines, number of changes)."""
+def _apply_review(lines, moves, inserts, removes=()):
+    """Moves note blocks, inserts missing questions / notes and drops replaced [other] lines; indexes refer
+    to `lines` before any change. Returns (new lines, number of changes)."""
     items = list(enumerate(lines))              # (original index, line); inserted lines have index None
     changes = 0
+    # only [other] lines (dropped from the form anyway) may be removed, so a question is never lost
+    drop = {i for i in removes if 0 <= i < len(lines) and "other" in _tag_words(lines[i])}
+    if drop:
+        items = [it for it in items if it[0] not in drop]
+        changes += len(drop)
 
     def position(orig):
-        if orig >= len(lines):
-            return len(items)
-        return next((p for p, (o, _) in enumerate(items) if o == orig), None)
+        """Where original line `orig` now stands; a removed line is replaced by the next one still there."""
+        present = {o: p for p, (o, _) in enumerate(items) if o is not None}
+        for o in range(orig, len(lines)):
+            if o in present:
+                return present[o]
+        return len(items)
 
     for mv in moves:
         i, before = mv["index"], mv["before"]
@@ -595,34 +621,32 @@ def _apply_note_fixes(lines, moves, inserts):
         moved = [it for it in items if it[0] in block]
         items = [it for it in items if it[0] not in block]
         p = position(before)
-        if p is None:
-            items.extend(moved)                   # target vanished; keep the note rather than lose it
-            continue
         items[p:p] = moved
         changes += 1
     for ins in inserts:
-        line, before = ins["line"].strip(), ins["before"]
-        if not line or not _is_note(line) or not (0 <= before <= len(lines)):
+        block, before = [l.strip() for l in ins["lines"] if l.strip()], ins["before"]
+        if not block or not _starts_item(block[0]) or not (0 <= before <= len(lines)):
             continue
         p = position(before)
-        items.insert(len(items) if p is None else p, (None, line))
+        items[p:p] = [(None, l) for l in block]
         changes += 1
     return [line for _, line in items], changes
 
 
-def review_notes(client, source_blocks, lines, rounds=2):
-    """Second check of the notes against the questionnaire: misplaced notes are moved, missing ones added,
-    and the result is checked again until nothing changes. Returns (lines, notes, cost)."""
+def review_completeness(client, source_blocks, lines, rounds=2):
+    """Second check against the questionnaire: missing questions (e.g. a whole Section 0) and notes are added,
+    misplaced notes moved, and the result is checked again until nothing changes. Returns (lines, notes, cost)."""
     lines = list(lines)
     notes, cost = [], 0.0
     for _ in range(rounds):
         numbered = "\n".join(f"{i}: {line}" for i, line in enumerate(lines))
         content = _cached(source_blocks) + [{"type": "text", "text":
-            f"<converted_lines>\n{numbered}\n</converted_lines>\n\nCheck the notes of the converted lines."}]
-        data, usage = _call_claude(client, NOTES_SYSTEM, content, NOTES_SCHEMA,
-                                   max_tokens=32000, effort=CONVERT_EFFORT)
+            f"<converted_lines>\n{numbered}\n</converted_lines>\n\n"
+            "Check that every question of the questionnaire is present and that the notes are in place."}]
+        data, usage = _call_claude(client, REVIEW_SYSTEM, content, REVIEW_SCHEMA,
+                                   max_tokens=64000, effort=CONVERT_EFFORT)
         cost += estimate_cost(usage)
-        lines, changes = _apply_note_fixes(lines, data["move"], data["insert"])
+        lines, changes = _apply_review(lines, data["move"], data["insert"], data["remove"])
         if not changes:
             break
         notes.extend(data["notes"])
