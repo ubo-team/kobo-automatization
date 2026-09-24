@@ -1,4 +1,5 @@
 import streamlit as st
+import streamlit.components.v1 as components
 from docx2python import docx2python
 import pandas as pd
 import re
@@ -61,6 +62,20 @@ def cached_file_uploader(label, types, key):
     return cached
 
 
+def add_other_language():
+    """Adds the language typed in the "Tjetër" field and empties the field for the next one."""
+    name = st.session_state.get("lang_other_new", "").strip()
+    others = st.session_state.setdefault("lang_others", [])
+    if name and name.lower() not in (o.lower() for o in others):
+        others.append(name)
+    st.session_state["lang_other_new"] = ""
+    st.session_state["lang_refocus"] = st.session_state.get("lang_refocus", 0) + 1
+
+
+def remove_other_language(name):
+    st.session_state["lang_others"].remove(name)
+
+
 WORKFLOW_GENERATE = "Gjenero pyetësorin"
 WORKFLOW_CHECK = "Kontrollo pyetësorin"
 workflow = st.radio("Mënyra e punës:", [WORKFLOW_GENERATE, WORKFLOW_CHECK], index=0)
@@ -82,14 +97,32 @@ translation_files = {}     # language -> uploaded file, for TR_SEPARATE
 if workflow == WORKFLOW_GENERATE:
     questionnaire_kind = st.radio("Pyetësori që do të ngarkosh:", [SOURCE_TAGGED, SOURCE_PLAIN], index=0)
 
-    st.markdown("Në cilat gjuhë do të gjenerohet formulari XLS? (mund të zgjidhni më shumë se një)")
+    st.markdown("Në cilat gjuhë do të gjenerohet formulari XLS? (mund të selektoni më shumë se një)")
     lang_cols = st.columns(4)
     ui_languages = [name for col, name in zip(lang_cols, LANG_UI)
                     if col.checkbox(name, value=(name == "Shqip"), key=f"lang_{name}")]
     if lang_cols[3].checkbox("Tjetër", key="lang_other"):
-        other = st.text_input("Shkruani gjuhën (për më shumë gjuhë, ndajini me presje):",
-                              placeholder="p.sh. Kroatisht", key="lang_other_text")
-        ui_languages += [l.strip() for l in other.split(",") if l.strip()]
+        st.markdown("Shkruani gjuhën:")
+        # The languages added so far, each with a button to remove it, then an empty field for the next one
+        for name in st.session_state.setdefault("lang_others", []):
+            col_name, col_btn = st.columns([3, 1], vertical_alignment="bottom")
+            col_name.text_input("Gjuha", value=name, disabled=True, key=f"lang_added_{name}",
+                                label_visibility="collapsed")
+            col_btn.button("Hiq", key=f"lang_remove_{name}", on_click=remove_other_language, args=(name,))
+        col_name, col_btn = st.columns([3, 1], vertical_alignment="bottom")
+        col_name.text_input("Gjuha e re", key="lang_other_new", placeholder="Shkruani gjuhën që dëshironi të shtoni",
+                            label_visibility="collapsed", on_change=add_other_language)
+        col_btn.button("Shto këtë gjuhë", key="lang_add", on_click=add_other_language)
+        ui_languages += st.session_state["lang_others"]
+        if st.session_state.pop("lang_refocus", None):
+            # After a language is added, put the cursor back in the empty field for the next one
+            components.html(f"""<script>/* {len(st.session_state['lang_others'])} */
+                const focusField = (tries) => {{
+                    const input = window.parent.document.querySelector('.st-key-lang_other_new input');
+                    if (input) input.focus(); else if (tries > 0) setTimeout(() => focusField(tries - 1), 100);
+                }};
+                focusField(20);
+                </script>""", height=0)
     form_languages = list(dict.fromkeys(LANG_UI.get(l) or qtr.language_name(l) for l in ui_languages))
     ui_name = {lang: next((u for u in ui_languages if (LANG_UI.get(u) or qtr.language_name(u)) == lang), lang)
                for lang in form_languages}
@@ -101,16 +134,52 @@ if workflow == WORKFLOW_GENERATE:
         translation_mode = st.radio("Përkthimi:", options, key=f"tr_mode_{len(form_languages) > 1}")
 
     if translation_mode == TR_SEPARATE:
+        st.markdown("Ngarkoni pyetësorin për secilën gjuhë:")
         st.caption(f"Skedari i gjuhës së parë ({ui_name[form_languages[0]]}) është pyetësori kryesor; "
                    f"nga skedarët e tjerë merren vetëm përkthimet.")
-        for k, lang in enumerate(form_languages):
-            slug = re.sub(r'\W+', '_', lang.lower())
-            key = "upload_questionnaire" if k == 0 else f"upload_lang_{slug}"
-            f = cached_file_uploader(f"{ui_name[lang]}: ngarko pyetësorin", qai.SOURCE_TYPES, key)
-            if k == 0:
-                uploaded_file = f
-            elif f is not None:
-                translation_files[lang] = f
+        # Small square upload boxes side by side: always four columns, so two languages do not get huge boxes
+        st.markdown("""<style>
+            .st-key-lang_uploads [data-testid="stFileUploaderDropzone"] {
+                aspect-ratio: 1 / 1; max-width: 170px; margin: 0 auto;
+                display: flex !important; flex-direction: column !important;
+                justify-content: center !important; align-items: center !important;
+                text-align: center; gap: 0.5rem; padding: 0.75rem;
+                border: 1.5px dashed rgba(128, 128, 128, 0.45); border-radius: 0.75rem;
+                transition: border-color 0.15s, background-color 0.15s;
+            }
+            .st-key-lang_uploads [data-testid="stFileUploaderDropzone"]:hover {
+                border-color: rgb(255, 75, 75); background-color: rgba(255, 75, 75, 0.05);
+            }
+            .st-key-lang_uploads [data-testid="stFileUploaderDropzone"] > * {
+                margin: 0 !important; width: auto !important; align-self: center !important;
+                justify-content: center !important; text-align: center !important;
+            }
+            .st-key-lang_uploads [data-testid="stFileUploaderDropzoneInstructions"] {
+                flex: 0 0 auto !important; height: auto !important; width: 100% !important;
+            }
+            /* the size limit and file types wrap under the button, inside the box */
+            .st-key-lang_uploads [data-testid="stFileUploaderDropzoneInstructions"] div,
+            .st-key-lang_uploads [data-testid="stFileUploaderDropzoneInstructions"] span {
+                width: 100%; white-space: normal !important; overflow-wrap: anywhere;
+                font-size: 0.7rem; line-height: 1.35; text-align: center;
+            }
+            .st-key-lang_uploads [data-testid="stWidgetLabel"] {
+                justify-content: center; font-weight: 600;
+            }
+            </style>""", unsafe_allow_html=True)
+        per_row = 4
+        with st.container(key="lang_uploads"):
+            for start in range(0, len(form_languages), per_row):
+                cols = st.columns(per_row)
+                for col, (k, lang) in zip(cols, list(enumerate(form_languages))[start:start + per_row]):
+                    slug = re.sub(r'\W+', '_', lang.lower())
+                    key = "upload_questionnaire" if k == 0 else f"upload_lang_{slug}"
+                    with col:
+                        f = cached_file_uploader(ui_name[lang], qai.SOURCE_TYPES, key)
+                    if k == 0:
+                        uploaded_file = f
+                    elif f is not None:
+                        translation_files[lang] = f
     elif form_languages:
         # One widget for both kinds, so switching the kind does not recreate it; the kind is validated below
         uploaded_file = cached_file_uploader("Zgjidh pyetësorin:", qai.SOURCE_TYPES, "upload_questionnaire")
