@@ -1,5 +1,6 @@
 import pandas as pd
 import streamlit as st
+import ubo_ui
 from io import BytesIO
 import re
 import os
@@ -8,32 +9,9 @@ import google.generativeai as genai
 
 
 
-st.set_page_config(page_title="Perkthim Excel Files A", layout="centered")
+st.set_page_config(layout="centered")
 
 
-logo_svg_path = "UBO-Logo.svg"
-
-with st.sidebar:
-    if os.path.exists(logo_svg_path):
-        with open(logo_svg_path, "r", encoding="utf-8") as f:
-            svg_logo = f.read()
-        st.markdown(
-            f'<div style="display:flex;justify-content:center;margin:15px 0;"><div style="width:150px;">{svg_logo}</div></div>',
-            unsafe_allow_html=True
-        )
-
-    st.markdown("""
-        <style>
-        [data-testid="stSidebar"] img {
-            display: block;
-            margin-left: auto;
-            margin-right: auto;
-            margin-top: 15px;
-            margin-bottom: 15px;
-        }
-        </style>
-    """, unsafe_allow_html=True)
-    
 GEMINI_TRANSLATION_API_KEY = st.secrets["GEMINI_TRANSLATION_API_KEY"]
 genai.configure(api_key=GEMINI_TRANSLATION_API_KEY)
 
@@ -160,9 +138,8 @@ def translate_dataframe(df, source_col, target_col, from_lang, to_lang):
     df[target_col] = results
     return df, total_in, total_out, errors
 
-st.title("Fillo me Përkthimin e Pyetësorëve")
-
-uploaded_file = st.file_uploader("Ngarko Excel-in", type=["xlsx"])
+with ubo_ui.card("Ngarkoni dokumentin Excel", step=1):
+    uploaded_file = st.file_uploader("Ngarko Excel-in", type=["xlsx"], label_visibility="collapsed")
 
 if uploaded_file:
     xls = pd.ExcelFile(uploaded_file)
@@ -176,64 +153,65 @@ if uploaded_file:
         st.session_state.translation_blocks = [0]
 
     for block_id in st.session_state.translation_blocks:
-        st.markdown(f"---\n### Blloku {block_id + 1}")
+        with ubo_ui.card(f"Blloku {block_id + 1} i përkthimit", step=block_id + 2, key=f"blloku_{block_id}"):
 
-        selected_sheet = st.selectbox(
-            f"Zgjidh një faqe për përkthim (Blloku {block_id + 1})",
-            sheet_names,
-            key=f"sheet_select_{block_id}"
-        )
-        df = st.session_state.translated_sheets[selected_sheet]
-        st.write(f"Pamje paraprake për {selected_sheet} (Blloku {block_id + 1}):", df.head())
-
-        columns = df.columns.tolist()
-        source_col = st.selectbox(f"Kolona burimore (Blloku {block_id + 1})", columns, key=f"source_col_{block_id}")
-        from_lang_label = st.selectbox(f"Gjuha burimore (Blloku {block_id + 1})", list(LANGUAGE_OPTIONS_UI.keys()), key=f"from_lang_{block_id}")
-        from_lang = LANGUAGE_OPTIONS_UI[from_lang_label]
-        multiple_targets = st.multiselect(f"Kolonat ku dëshiron të përkthehet (Blloku {block_id + 1})", columns, key=f"multi_target_{block_id}")
-
-        target_languages = []
-        for target_col in multiple_targets:
-            lang_label = st.selectbox(f"Gjuha për kolonën: {target_col} (Blloku {block_id + 1})", list(LANGUAGE_OPTIONS_UI.keys()), key=f"{target_col}_lang_{block_id}")
-            target_languages.append((target_col, LANGUAGE_OPTIONS_UI[lang_label]))
-
-        if st.button(f"Fillo Përkthimin për {selected_sheet} (Blloku {block_id + 1})", key=f"translate_btn_{block_id}"):
-            block_in_tokens, block_out_tokens = 0, 0
-            all_errors = []
-            for target_col, to_lang in target_languages:
-                df, in_tok, out_tok, errors = translate_dataframe(df, source_col, target_col, from_lang=from_lang, to_lang=to_lang)
-                block_in_tokens += in_tok
-                block_out_tokens += out_tok
-                all_errors.extend(errors)
-
-            if all_errors:
-                st.error(f"Ka pasur {len(all_errors)} gabime. Gabimi i parë: {all_errors[0]}")
-            else:
-                st.session_state.translated_sheets[selected_sheet] = df.copy()
-                st.success(f"Përkthimi për {selected_sheet} u krye me sukses në Bllokun {block_id + 1}!")
-
-            st.write(df.head())
-
-            model_id = f"models/{MODEL_NAME}"
-            block_cost = calculate_gemini_cost(block_in_tokens, block_out_tokens, model_id)
-            st.info(
-                f"**Kostoja e Bllokut {block_id + 1}:**  \n"
-                f"Input tokens: **{block_in_tokens:,}** | Output tokens: **{block_out_tokens:,}**  \n"
-                f"Kostoja: **${block_cost:.4f}**"
+            selected_sheet = st.selectbox(
+                f"Zgjidh një faqe për përkthim (Blloku {block_id + 1})",
+                sheet_names,
+                key=f"sheet_select_{block_id}"
             )
+            df = st.session_state.translated_sheets[selected_sheet]
+            st.write(f"Pamje paraprake për {selected_sheet} (Blloku {block_id + 1}):", df.head())
 
-        if block_id == len(st.session_state.translation_blocks) - 1:
-            add_block = st.button("Shto bllok përkthimi të ri", key=f"add_block_{block_id}")
-            if add_block:
-                st.session_state.translation_blocks.append(len(st.session_state.translation_blocks))
+            columns = df.columns.tolist()
+            source_col = st.selectbox(f"Kolona burimore (Blloku {block_id + 1})", columns, key=f"source_col_{block_id}")
+            from_lang_label = st.selectbox(f"Gjuha burimore (Blloku {block_id + 1})", list(LANGUAGE_OPTIONS_UI.keys()), key=f"from_lang_{block_id}")
+            from_lang = LANGUAGE_OPTIONS_UI[from_lang_label]
+            multiple_targets = st.multiselect(f"Kolonat ku dëshiron të përkthehet (Blloku {block_id + 1})", columns, key=f"multi_target_{block_id}", placeholder="Zgjidhni kolonat")
 
-    output = BytesIO()
-    with pd.ExcelWriter(output, engine="openpyxl") as writer:
-        for sheet in sheet_names:
-            st.session_state.translated_sheets.get(sheet, all_sheets[sheet]).to_excel(writer, sheet_name=sheet, index=False)
+            target_languages = []
+            for target_col in multiple_targets:
+                lang_label = st.selectbox(f"Gjuha për kolonën: {target_col} (Blloku {block_id + 1})", list(LANGUAGE_OPTIONS_UI.keys()), key=f"{target_col}_lang_{block_id}")
+                target_languages.append((target_col, LANGUAGE_OPTIONS_UI[lang_label]))
 
-    st.download_button(
-        label="Shkarko Excel-in me të gjitha përkthimet",
-        data=output.getvalue(),
-        file_name=uploaded_file.name
-    )
+            if st.button(f"Fillo Përkthimin për {selected_sheet} (Blloku {block_id + 1})", key=f"translate_btn_{block_id}", type="primary"):
+                block_in_tokens, block_out_tokens = 0, 0
+                all_errors = []
+                for target_col, to_lang in target_languages:
+                    df, in_tok, out_tok, errors = translate_dataframe(df, source_col, target_col, from_lang=from_lang, to_lang=to_lang)
+                    block_in_tokens += in_tok
+                    block_out_tokens += out_tok
+                    all_errors.extend(errors)
+
+                if all_errors:
+                    st.error(f"Ka pasur {len(all_errors)} gabime. Gabimi i parë: {all_errors[0]}")
+                else:
+                    st.session_state.translated_sheets[selected_sheet] = df.copy()
+                    st.success(f"Përkthimi për {selected_sheet} u krye me sukses në Bllokun {block_id + 1}!")
+
+                st.write(df.head())
+
+                model_id = f"models/{MODEL_NAME}"
+                block_cost = calculate_gemini_cost(block_in_tokens, block_out_tokens, model_id)
+                st.info(
+                    f"**Kostoja e Bllokut {block_id + 1}:**  \n"
+                    f"Tokenë hyrës: **{block_in_tokens:,}** | Tokenë dalës: **{block_out_tokens:,}**  \n"
+                    f"Kostoja: **${block_cost:.4f}**"
+                )
+
+            if block_id == len(st.session_state.translation_blocks) - 1:
+                add_block = st.button("Shto bllok përkthimi të ri", key=f"add_block_{block_id}")
+                if add_block:
+                    st.session_state.translation_blocks.append(len(st.session_state.translation_blocks))
+
+    with ubo_ui.card("Shkarkoni rezultatin", step=len(st.session_state.translation_blocks) + 2):
+        output = BytesIO()
+        with pd.ExcelWriter(output, engine="openpyxl") as writer:
+            for sheet in sheet_names:
+                st.session_state.translated_sheets.get(sheet, all_sheets[sheet]).to_excel(writer, sheet_name=sheet, index=False)
+
+        st.download_button(
+            label="Shkarko Excel-in me të gjitha përkthimet",
+            data=output.getvalue(),
+            file_name=uploaded_file.name
+        )

@@ -1,6 +1,7 @@
 import pandas as pd
 import re
 import streamlit as st
+import ubo_ui
 from docx import Document
 from collections import defaultdict
 from difflib import get_close_matches
@@ -126,21 +127,23 @@ def extract_from_docx_to_excel(docx_file):
 
     return pd.DataFrame(data)
 
-st.title("Përkthimi i dokumenteve zyrtare")
-mode = st.radio("Zgjidh mënyrën:", ["Ngarko DOCX", "Ngarko XLSForm"])
+with ubo_ui.card("Mënyra e punës", step=1):
+    mode = st.radio("Zgjidh mënyrën:", ["Ngarko DOCX", "Ngarko XLSForm"], label_visibility="collapsed")
 
 if mode == "Ngarko DOCX":
-    docx_file = st.file_uploader("Ngarko dokumentin Word (.docx)", type=["docx"])
-    if docx_file:
-        extracted_df = extract_from_docx_to_excel(docx_file)
-        st.success("Dokumenti DOCX u ekstraktua me sukses!")
-        st.dataframe(extracted_df.head())
-        extracted_df.to_excel("cleaned_output.xlsx", index=False)
-        st.download_button("Shkarko Excelin e ekstraktuar", data=open("cleaned_output.xlsx", "rb").read(), file_name="cleaned_output.xlsx")
+    with ubo_ui.card("Ngarkoni dokumentin Word", step=2):
+        docx_file = st.file_uploader("Ngarko dokumentin Word (.docx)", type=["docx"])
+        if docx_file:
+            extracted_df = extract_from_docx_to_excel(docx_file)
+            st.success("Dokumenti DOCX u ekstraktua me sukses!")
+            st.dataframe(extracted_df.head())
+            extracted_df.to_excel("cleaned_output.xlsx", index=False)
+            st.download_button("Shkarko Excelin e ekstraktuar", data=open("cleaned_output.xlsx", "rb").read(), file_name="cleaned_output.xlsx")
 
 elif mode == "Ngarko XLSForm":
-    original_file = st.file_uploader("Ngarko XLSForm-in origjinal (Excelin)", type=["xlsx"])
-    translated_file = st.file_uploader("Ngarko Excelin me përkthimin e pastruar", type=["xlsx"])
+    with ubo_ui.card("Ngarkoni dokumentet", step=2):
+        original_file = st.file_uploader("Ngarko XLSForm-in origjinal (Excelin)", type=["xlsx"])
+        translated_file = st.file_uploader("Ngarko Excelin me përkthimin e pastruar", type=["xlsx"])
 
     if original_file and translated_file:
         import os
@@ -157,28 +160,29 @@ elif mode == "Ngarko XLSForm":
         choices_df.columns = choices_df.columns.str.strip()
         settings_df.columns = settings_df.columns.str.strip()
 
-        label_columns = [col for col in survey_df.columns if col.startswith("label::")]
-        if not label_columns:
-            st.error("XLSForm nuk ka kolona 'label::'. Sigurohu që Exceli ka kolona si 'label::Albanian (1)', 'label::Serbian (2)', etj.")
-            st.stop()
-        from_label = st.selectbox("Zgjidh kolonën në Excel prej nga do të përkthehet:", label_columns).strip()
-        to_label = st.selectbox("Zgjidh kolonën në Excel ku do të vendoset përkthimi:", label_columns).strip()
+        with ubo_ui.card("Kolonat dhe gjuhët", step=3):
+            label_columns = [col for col in survey_df.columns if col.startswith("label::")]
+            if not label_columns:
+                st.error("XLSForm nuk ka kolona 'label::'. Sigurohu që Exceli ka kolona si 'label::Albanian (1)', 'label::Serbian (2)', etj.")
+                st.stop()
+            from_label = st.selectbox("Zgjidh kolonën në Excel prej nga do të përkthehet:", label_columns).strip()
+            to_label = st.selectbox("Zgjidh kolonën në Excel ku do të vendoset përkthimi:", label_columns).strip()
 
-        hint_columns = [col for col in survey_df.columns if col.startswith("hint::")]
-        if hint_columns:
-            to_hint_col = st.selectbox("Zgjidh kolonën e hint-it ku do të vendoset (p.sh. Albanian ose Serbian):", hint_columns)
-        else:
-            to_hint_col = None
+            hint_columns = [col for col in survey_df.columns if col.startswith("hint::")]
+            if hint_columns:
+                to_hint_col = st.selectbox("Zgjidh kolonën e hint-it ku do të vendoset (p.sh. Albanian ose Serbian):", hint_columns)
+            else:
+                to_hint_col = None
 
-        LANG_OPTIONS = {
-            "Gjuha Shqipe": "al",
-            "Gjuha Angleze": "en",
-            "Gjuha Serbe": "sr",
-        }
-        from_lang_label = st.selectbox("Gjuha burimore:", list(LANG_OPTIONS.keys()), key="from_lang_zyrt")
-        to_lang_label = st.selectbox("Gjuha e përkthimit:", list(LANG_OPTIONS.keys()), key="to_lang_zyrt")
-        from_lang = LANG_OPTIONS[from_lang_label]
-        to_lang = LANG_OPTIONS[to_lang_label]
+            LANG_OPTIONS = {
+                "Gjuha Shqipe": "al",
+                "Gjuha Angleze": "en",
+                "Gjuha Serbe": "sr",
+            }
+            from_lang_label = st.selectbox("Gjuha burimore:", list(LANG_OPTIONS.keys()), key="from_lang_zyrt")
+            to_lang_label = st.selectbox("Gjuha e përkthimit:", list(LANG_OPTIONS.keys()), key="to_lang_zyrt")
+            from_lang = LANG_OPTIONS[from_lang_label]
+            to_lang = LANG_OPTIONS[to_lang_label]
 
         def clean_label(val):
             if pd.isna(val): return ""
@@ -556,5 +560,6 @@ elif mode == "Ngarko XLSForm":
         base_name = os.path.splitext(original_file.name)[0]
         translated_file_name = f"{base_name}_perkthyer.xlsx"
 
-        st.success("Përkthimi u përfundua me sukses!")
-        st.download_button("Shkarko Excelin e Përkthyer", data=open(output_file, "rb").read(), file_name=translated_file_name)
+        with ubo_ui.card("Rezultati", step=4):
+            st.success("Përkthimi u përfundua me sukses!")
+            st.download_button("Shkarko Excelin e Përkthyer", data=open(output_file, "rb").read(), file_name=translated_file_name)

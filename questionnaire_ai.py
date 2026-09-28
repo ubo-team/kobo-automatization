@@ -10,6 +10,7 @@
 """
 
 import base64
+import contextvars
 import itertools
 import json
 import math
@@ -39,6 +40,21 @@ SOURCE_TYPES = ["docx", "xlsx", "pdf", "txt", "csv", "md"]
 
 class AIError(Exception):
     """Error with a message that can be shown to the user as-is."""
+
+
+class Cancelled(AIError):
+    """The user cancelled the request ("Anulo kërkesën")."""
+
+
+# Set by ubo_ui.interruptible() to a threading.Event that is set when the page is stopped; the AI calls
+# check it while they stream, so a stopped page also stops the request instead of letting it run (and cost).
+CANCEL = contextvars.ContextVar("ubo_cancel", default=None)
+
+
+def check_cancelled():
+    event = CANCEL.get()
+    if event is not None and event.is_set():
+        raise Cancelled("Kërkesa u anulua.")
 
 
 # ---------------------------------------------------------------------------
@@ -71,6 +87,8 @@ def _call_claude(client, system, content, schema, max_tokens=64000, effort=FILTE
         params.update(betas=[FALLBACK_BETA], fallbacks="default")
     try:
         with client.beta.messages.stream(**params) as stream:
+            for _ in stream:            # read event by event, so a stop is noticed while Claude is writing
+                check_cancelled()
             message = stream.get_final_message()
     except anthropic.AuthenticationError:
         raise AIError("Çelësi API i Claude (ANTHROPIC_API_KEY) nuk është i vlefshëm.")
@@ -510,7 +528,7 @@ def repair_translations(client, source_blocks, lines, rounds=2):
         data, usage = _call_claude(client, TRANSLATION_SYSTEM, content, TRANSLATION_SCHEMA,
                                    max_tokens=64000, effort=CONVERT_EFFORT)
         cost += estimate_cost(usage)
-        notes.extend(data["notes"])
+        notes.extend(data.get("notes", []))
         wanted = {p["index"] for p in issues}
         for fix in data["fixes"]:
             i, new = fix["index"], fix["line"].strip()
@@ -534,7 +552,7 @@ def translation_warnings(issues, limit=30):
 # Step 1c: second check against the questionnaire: every question present, notes in their place
 # ---------------------------------------------------------------------------
 
-REVIEW_SYSTEM = INPUT_NOTE + """
+COMPLETENESS_SYSTEM = INPUT_NOTE + """
 
 A questionnaire was converted into a line-based tagged format. Question lines start with the question ID and end with a type tag (`[single]`, `[multiple]`, `[text]`, `[numeric]`, `[decimal]`, `[date]`, `[time]`, `[scale …]`, `[matrix …]`, `[ranking N]`); option lines follow `[single]` / `[multiple]` / `[ranking]` questions. `[note]` lines hold text shown without an answer: introductions, consent text, read-aloud passages, section introductions; untagged lines right after a `[note]` line continue that note. `[group]` / `[section]` lines open a module / section, `[end group]` closes a module. Tags go at the end of the line; with a `[languages: …]` line, every text holds all languages separated by ` || `.
 
@@ -545,7 +563,7 @@ Check the converted lines against the questionnaire, going through the questionn
 
 Indexes are the numbers before the converted lines, all referring to the lines as given. Report only real problems; when everything is present and in place, return empty lists. In `notes`, describe (in Albanian) each change in one short sentence."""
 
-REVIEW_SCHEMA = {
+COMPLETENESS_SCHEMA = {
     "type": "object",
     "properties": {
         "insert": {"type": "array", "items": {
@@ -643,13 +661,13 @@ def review_completeness(client, source_blocks, lines, rounds=2):
         content = _cached(source_blocks) + [{"type": "text", "text":
             f"<converted_lines>\n{numbered}\n</converted_lines>\n\n"
             "Check that every question of the questionnaire is present and that the notes are in place."}]
-        data, usage = _call_claude(client, REVIEW_SYSTEM, content, REVIEW_SCHEMA,
+        data, usage = _call_claude(client, COMPLETENESS_SYSTEM, content, COMPLETENESS_SCHEMA,
                                    max_tokens=64000, effort=CONVERT_EFFORT)
         cost += estimate_cost(usage)
-        lines, changes = _apply_review(lines, data["move"], data["insert"], data["remove"])
+        lines, changes = _apply_review(lines, data.get("move", []), data.get("insert", []), data.get("remove", []))
         if not changes:
             break
-        notes.extend(data["notes"])
+        notes.extend(data.get("notes", []))
     return lines, notes, cost
 
 
@@ -662,9 +680,9 @@ def read_form(data):
     try:
         sheets = pd.read_excel(BytesIO(data), sheet_name=None, dtype=str, keep_default_na=False)
     except Exception as e:
-        raise AIError(f"Skedari XLS nuk mund të lexohet: {e}")
+        raise AIError(f"Dokumenti XLS nuk mund të lexohet: {e}")
     if _sheet_key(sheets, "survey") is None:
-        raise AIError("Skedari nuk ka fletën 'survey' – nuk duket si formular XLSForm.")
+        raise AIError("Dokumenti nuk ka fletën 'survey' – nuk duket si formular XLSForm.")
     survey_key = _sheet_key(sheets, "survey")
     survey = sheets[survey_key]
     survey.columns = [str(c).strip() for c in survey.columns]

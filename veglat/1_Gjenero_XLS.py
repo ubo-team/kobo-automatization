@@ -1,5 +1,4 @@
 import streamlit as st
-import streamlit.components.v1 as components
 from docx2python import docx2python
 import pandas as pd
 import re
@@ -11,22 +10,11 @@ import hashlib
 from io import BytesIO
 import questionnaire_ai as qai
 import questionnaire_translate as qtr
+import ubo_ui
 
 
-st.set_page_config(page_title="Gjenero XLS", layout="centered")
+st.set_page_config(layout="centered")
 
-logo_svg_path = "UBO-Logo.svg"
-with st.sidebar:
-    if os.path.exists(logo_svg_path):
-        with open(logo_svg_path, "r", encoding="utf-8") as f:
-            svg_logo = f.read()
-        st.markdown(
-            f'<div style="display:flex;justify-content:center;margin:15px 0;"><div style="width:150px;">{svg_logo}</div></div>',
-            unsafe_allow_html=True
-        )
-
-st.title("Gjenero XLS")
-st.markdown("Ngarko pyetësorin dhe gjenero formularin XLS për përdorim në Kobo Toolbox.")
 
 class CachedFile:
     """Stand-in for an UploadedFile, rebuilt from the copy kept in session_state."""
@@ -55,7 +43,7 @@ def cached_file_uploader(label, types, key):
     cached = st.session_state.get(key + "_cache")
     if cached is not None:
         col_info, col_btn = st.columns([5, 1])
-        col_info.caption(f"📄 Skedari i ngarkuar më parë: **{cached.name}**")
+        col_info.caption(f"📄 Dokumenti i ngarkuar më parë: **{cached.name}**")
         if col_btn.button("Hiq", key=key + "_clear"):
             st.session_state.pop(key + "_cache", None)
             st.rerun()
@@ -78,7 +66,8 @@ def remove_other_language(name):
 
 WORKFLOW_GENERATE = "Gjenero pyetësorin"
 WORKFLOW_CHECK = "Kontrollo pyetësorin"
-workflow = st.radio("Mënyra e punës:", [WORKFLOW_GENERATE, WORKFLOW_CHECK], index=0)
+with ubo_ui.card("Mënyra e punës", step=1):
+    workflow = st.radio("Mënyra e punës:", [WORKFLOW_GENERATE, WORKFLOW_CHECK], index=0, label_visibility="collapsed")
 
 SOURCE_TAGGED = "I formatuar me tag-e (.docx)"
 SOURCE_PLAIN = "I paformatuar – AI e formaton (.docx, .xlsx, .pdf, .txt, .csv)"
@@ -86,8 +75,8 @@ SOURCE_PLAIN = "I paformatuar – AI e formaton (.docx, .xlsx, .pdf, .txt, .csv)
 LANG_UI = {"Shqip": "Albanian", "Anglisht": "English", "Serbisht": "Serbian"}
 TR_READY = "Pyetësori është tashmë në këtë gjuhë"
 TR_AI = "Përkthe me AI (Gemini)"
-TR_MERGED = "Përkthimet janë të bashkuara në një skedar"
-TR_SEPARATE = "Përkthimet janë në skedarë të veçantë"
+TR_MERGED = "Përkthimet janë të bashkuara në një dokument"
+TR_SEPARATE = "Përkthimet janë në dokumente të veçanta"
 
 uploaded_file = None
 questionnaire_kind = SOURCE_TAGGED
@@ -95,94 +84,93 @@ form_languages = []        # English names, in the order of the form's label col
 translation_mode = TR_READY
 translation_files = {}     # language -> uploaded file, for TR_SEPARATE
 if workflow == WORKFLOW_GENERATE:
-    questionnaire_kind = st.radio("Pyetësori që do të ngarkosh:", [SOURCE_TAGGED, SOURCE_PLAIN], index=0)
+    with ubo_ui.card("Pyetësori që do të ngarkoni", step=2):
+        questionnaire_kind = st.radio("Pyetësori që do të ngarkosh:", [SOURCE_TAGGED, SOURCE_PLAIN], index=0,
+                                      label_visibility="collapsed")
 
-    st.markdown("Në cilat gjuhë do të gjenerohet formulari XLS? (mund të selektoni më shumë se një)")
-    lang_cols = st.columns(4)
-    ui_languages = [name for col, name in zip(lang_cols, LANG_UI)
-                    if col.checkbox(name, value=(name == "Shqip"), key=f"lang_{name}")]
-    if lang_cols[3].checkbox("Tjetër", key="lang_other"):
-        st.markdown("Shkruani gjuhën:")
-        # The languages added so far, each with a button to remove it, then an empty field for the next one
-        for name in st.session_state.setdefault("lang_others", []):
+    with ubo_ui.card("Gjuhët e formularit", step=3,
+                     subtitle="Në cilat gjuhë do të gjenerohet formulari XLS? (mund të selektoni më shumë se një)"):
+        lang_cols = st.columns(4)
+        ui_languages = [name for col, name in zip(lang_cols, LANG_UI)
+                        if col.checkbox(name, value=(name == "Shqip"), key=f"lang_{name}")]
+        if lang_cols[3].checkbox("Tjetër", key="lang_other"):
+            st.markdown("Shkruani gjuhën:")
+            # The languages added so far, each with a button to remove it, then an empty field for the next one
+            for name in st.session_state.setdefault("lang_others", []):
+                col_name, col_btn = st.columns([3, 1], vertical_alignment="bottom")
+                col_name.text_input("Gjuha", value=name, disabled=True, key=f"lang_added_{name}",
+                                    label_visibility="collapsed")
+                col_btn.button("Hiq", key=f"lang_remove_{name}", on_click=remove_other_language, args=(name,))
             col_name, col_btn = st.columns([3, 1], vertical_alignment="bottom")
-            col_name.text_input("Gjuha", value=name, disabled=True, key=f"lang_added_{name}",
-                                label_visibility="collapsed")
-            col_btn.button("Hiq", key=f"lang_remove_{name}", on_click=remove_other_language, args=(name,))
-        col_name, col_btn = st.columns([3, 1], vertical_alignment="bottom")
-        col_name.text_input("Gjuha e re", key="lang_other_new", placeholder="Shkruani gjuhën që dëshironi të shtoni",
-                            label_visibility="collapsed", on_change=add_other_language)
-        col_btn.button("Shto këtë gjuhë", key="lang_add", on_click=add_other_language)
-        ui_languages += st.session_state["lang_others"]
-        if st.session_state.pop("lang_refocus", None):
-            # After a language is added, put the cursor back in the empty field for the next one
-            components.html(f"""<script>/* {len(st.session_state['lang_others'])} */
-                const focusField = (tries) => {{
-                    const input = window.parent.document.querySelector('.st-key-lang_other_new input');
-                    if (input) input.focus(); else if (tries > 0) setTimeout(() => focusField(tries - 1), 100);
-                }};
-                focusField(20);
-                </script>""", height=0)
-    form_languages = list(dict.fromkeys(LANG_UI.get(l) or qtr.language_name(l) for l in ui_languages))
-    ui_name = {lang: next((u for u in ui_languages if (LANG_UI.get(u) or qtr.language_name(u)) == lang), lang)
-               for lang in form_languages}
+            col_name.text_input("Gjuha e re", key="lang_other_new", placeholder="Shkruani gjuhën që dëshironi të shtoni",
+                                label_visibility="collapsed", on_change=add_other_language)
+            col_btn.button("Shto këtë gjuhë", key="lang_add", on_click=add_other_language)
+            ui_languages += st.session_state["lang_others"]
+            if st.session_state.pop("lang_refocus", None):
+                # After a language is added, put the cursor back in the empty field for the next one
+                st.iframe(f"""<script>/* {len(st.session_state['lang_others'])} */
+                    const focusField = (tries) => {{
+                        const input = window.parent.document.querySelector('.st-key-lang_other_new input');
+                        if (input) input.focus(); else if (tries > 0) setTimeout(() => focusField(tries - 1), 100);
+                    }};
+                    focusField(20);
+                    </script>""", height=1)
+        form_languages = list(dict.fromkeys(LANG_UI.get(l) or qtr.language_name(l) for l in ui_languages))
+        ui_name = {lang: next((u for u in ui_languages if (LANG_UI.get(u) or qtr.language_name(u)) == lang), lang)
+                   for lang in form_languages}
 
-    if not form_languages:
-        st.warning("Zgjidhni të paktën një gjuhë.")
-    else:
-        options = [TR_READY, TR_AI] if len(form_languages) == 1 else [TR_AI, TR_MERGED, TR_SEPARATE]
-        translation_mode = st.radio("Përkthimi:", options, key=f"tr_mode_{len(form_languages) > 1}")
+        if not form_languages:
+            st.warning("Zgjidhni të paktën një gjuhë.")
+        else:
+            options = [TR_READY, TR_AI] if len(form_languages) == 1 else [TR_AI, TR_MERGED, TR_SEPARATE]
+            translation_mode = st.radio("Përkthimi:", options, key=f"tr_mode_{len(form_languages) > 1}")
 
     if translation_mode == TR_SEPARATE:
-        st.markdown("Ngarkoni pyetësorin për secilën gjuhë:")
-        st.caption(f"Skedari i gjuhës së parë ({ui_name[form_languages[0]]}) është pyetësori kryesor; "
-                   f"nga skedarët e tjerë merren vetëm përkthimet.")
-        # Small square upload boxes side by side: always four columns, so two languages do not get huge boxes
-        st.markdown("""<style>
-            .st-key-lang_uploads [data-testid="stFileUploaderDropzone"] {
-                aspect-ratio: 1 / 1; max-width: 170px; margin: 0 auto;
-                display: flex !important; flex-direction: column !important;
-                justify-content: center !important; align-items: center !important;
-                text-align: center; gap: 0.5rem; padding: 0.75rem;
-                border: 1.5px dashed rgba(128, 128, 128, 0.45); border-radius: 0.75rem;
-                transition: border-color 0.15s, background-color 0.15s;
-            }
-            .st-key-lang_uploads [data-testid="stFileUploaderDropzone"]:hover {
-                border-color: rgb(255, 75, 75); background-color: rgba(255, 75, 75, 0.05);
-            }
-            .st-key-lang_uploads [data-testid="stFileUploaderDropzone"] > * {
-                margin: 0 !important; width: auto !important; align-self: center !important;
-                justify-content: center !important; text-align: center !important;
-            }
-            .st-key-lang_uploads [data-testid="stFileUploaderDropzoneInstructions"] {
-                flex: 0 0 auto !important; height: auto !important; width: 100% !important;
-            }
-            /* the size limit and file types wrap under the button, inside the box */
-            .st-key-lang_uploads [data-testid="stFileUploaderDropzoneInstructions"] div,
-            .st-key-lang_uploads [data-testid="stFileUploaderDropzoneInstructions"] span {
-                width: 100%; white-space: normal !important; overflow-wrap: anywhere;
-                font-size: 0.7rem; line-height: 1.35; text-align: center;
-            }
-            .st-key-lang_uploads [data-testid="stWidgetLabel"] {
-                justify-content: center; font-weight: 600;
-            }
-            </style>""", unsafe_allow_html=True)
-        per_row = 4
-        with st.container(key="lang_uploads"):
-            for start in range(0, len(form_languages), per_row):
-                cols = st.columns(per_row)
-                for col, (k, lang) in zip(cols, list(enumerate(form_languages))[start:start + per_row]):
-                    slug = re.sub(r'\W+', '_', lang.lower())
-                    key = "upload_questionnaire" if k == 0 else f"upload_lang_{slug}"
-                    with col:
-                        f = cached_file_uploader(ui_name[lang], qai.SOURCE_TYPES, key)
-                    if k == 0:
-                        uploaded_file = f
-                    elif f is not None:
-                        translation_files[lang] = f
+        with ubo_ui.card("Ngarkoni pyetësorin për secilën gjuhë", step=4,
+                         subtitle=f"Dokumenti i gjuhës së parë ({ui_name[form_languages[0]]}) është pyetësori "
+                                  f"kryesor; nga dokumentet e tjera merren vetëm përkthimet."):
+            # Small square upload boxes side by side: always four columns, so two languages do not get huge boxes
+            st.markdown("""<style>
+                .st-key-lang_uploads [data-testid="stFileUploaderDropzone"] {
+                    aspect-ratio: 1 / 1; max-width: 170px; margin: 0 auto;
+                    display: flex !important; flex-direction: column !important;
+                    justify-content: center !important; align-items: center !important;
+                    text-align: center; gap: 0.5rem; padding: 0.75rem;
+                }
+                .st-key-lang_uploads [data-testid="stFileUploaderDropzone"] > * {
+                    margin: 0 !important; width: auto !important; align-self: center !important;
+                    justify-content: center !important; text-align: center !important;
+                }
+                .st-key-lang_uploads [data-testid="stFileUploaderDropzoneInstructions"] {
+                    flex: 0 0 auto !important; height: auto !important; width: 100% !important;
+                }
+                /* the hint text wraps under the button, inside the box */
+                .st-key-lang_uploads [data-testid="stFileUploaderDropzoneInstructions"] div,
+                .st-key-lang_uploads [data-testid="stFileUploaderDropzoneInstructions"] span {
+                    width: 100%; white-space: normal !important; line-height: 1.35; text-align: center;
+                }
+                .st-key-lang_uploads [data-testid="stFileUploaderDropzoneInstructions"] span::after {
+                    font-size: 11.5px !important;
+                }
+                .st-key-lang_uploads [data-testid="stWidgetLabel"] { justify-content: center; }
+                </style>""", unsafe_allow_html=True)
+            per_row = 4
+            with st.container(key="lang_uploads"):
+                for start in range(0, len(form_languages), per_row):
+                    cols = st.columns(per_row)
+                    for col, (k, lang) in zip(cols, list(enumerate(form_languages))[start:start + per_row]):
+                        slug = re.sub(r'\W+', '_', lang.lower())
+                        key = "upload_questionnaire" if k == 0 else f"upload_lang_{slug}"
+                        with col:
+                            f = cached_file_uploader(ui_name[lang], qai.SOURCE_TYPES, key)
+                        if k == 0:
+                            uploaded_file = f
+                        elif f is not None:
+                            translation_files[lang] = f
     elif form_languages:
-        # One widget for both kinds, so switching the kind does not recreate it; the kind is validated below
-        uploaded_file = cached_file_uploader("Zgjidh pyetësorin:", qai.SOURCE_TYPES, "upload_questionnaire")
+        with ubo_ui.card("Ngarkoni pyetësorin", step=4):
+            # One widget for both kinds, so switching the kind does not recreate it; the kind is validated below
+            uploaded_file = cached_file_uploader("Zgjidh pyetësorin:", qai.SOURCE_TYPES, "upload_questionnaire")
 
 STRUCTURE_TAGS = {
     "group": "group", "end group": "end group", "end_group": "end group",
@@ -1086,7 +1074,7 @@ def apply_languages(lines):
             missing_ui = ", ".join(ui_name.get(l, l) for l in missing)
             if translation_mode == TR_MERGED:
                 raise qai.AIError(f"Pyetësori nuk ka tekst në: {missing_ui}. Zgjidhni **'{TR_AI}'** që ta përkthejë "
-                                  f"Gemini, ose ngarkoni përkthimet si skedarë të veçantë.")
+                                  f"Gemini, ose ngarkoni përkthimet si dokumente të veçanta.")
             return new_lines, [f"Pyetësori nuk ka tekst në {missing_ui}; u përdor gjuha e parë e tij."], 0.0
         return new_lines, [], 0.0
 
@@ -1099,7 +1087,7 @@ def apply_languages(lines):
     for lang, f in translation_files.items():
         text = qai.to_markdown(f.name, f.getvalue())
         if not text or not text.strip():
-            raise qai.AIError(f"Skedari i gjuhës {ui_name.get(lang, lang)} nuk ka tekst që mund të lexohet "
+            raise qai.AIError(f"Dokumenti i gjuhës {ui_name.get(lang, lang)} nuk ka tekst që mund të lexohet "
                               f"(PDF i skanuar?). Ngarkojeni si .docx, .xlsx ose .txt.")
         references[lang] = text
     return qtr.merge_translations(lines, form_languages, references, model)
@@ -1111,6 +1099,28 @@ def reset_state_for_file(prefix, file_key):
         for k in [k for k in st.session_state if k.startswith(prefix)]:
             del st.session_state[k]
         st.session_state[prefix + "file_key"] = file_key
+
+
+def show_form_ready(where):
+    """Success message and download button of the generated form (at the end of the page and in the popup)."""
+    st.success("Formulari XLS u gjenerua me sukses!")
+    notes = len(st.session_state.get("gen_warnings") or [])
+    if notes:
+        st.caption(f"Ka {notes} gjëra për t'u kontrolluar në formular; i gjeni te kutia \"Gjenerimi i formularit\".")
+    st.download_button(
+        label="Shkarko formularin XLS",
+        data=st.session_state["gen_xlsx_data"],
+        file_name=st.session_state["gen_xlsx_name"],
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        type="primary",
+        key=f"download_form_{where}",
+        on_click="ignore",   # downloading does not rerun the page (and does not close the popup)
+    )
+
+
+@st.dialog("Formulari XLS është gati")
+def ready_dialog():
+    show_form_ready("popup")
 
 
 def show_test_report(report):
@@ -1161,7 +1171,7 @@ def add_ai_filters(xlsx_path, source_blocks, routing=None):
     cost = 0.0
     try:
         with st.spinner("Claude po shton filtrat sipas pyetësorit..."):
-            filters, notes, usage = qai.generate_filters(client, source_blocks, sheets, routing=routing)
+            filters, notes, usage = ubo_ui.interruptible(qai.generate_filters, client, source_blocks, sheets, routing=routing)
             cost += qai.estimate_cost(usage)
             applied, rejected = qai.apply_filters(sheets, filters)
         with st.spinner("Po testohen filtrat..."):
@@ -1170,7 +1180,7 @@ def add_ai_filters(xlsx_path, source_blocks, routing=None):
             failed = [i for i in report["issues"] if i["severity"] == "error" or
                       (i.get("kind") == "routing" and i["severity"] == "warning")]
             if failed:
-                fixes, fix_notes, usage = qai.generate_filters(client, source_blocks, sheets, failed_tests=failed,
+                fixes, fix_notes, usage = ubo_ui.interruptible(qai.generate_filters, client, source_blocks, sheets, failed_tests=failed,
                                                                routing=routing)
                 cost += qai.estimate_cost(usage)
                 fixed, fix_rejected = qai.apply_filters(sheets, fixes, combine_existing=False)
@@ -1208,17 +1218,18 @@ def show_filter_results(result):
 
 
 def render_filter_check():
-    xls_file = cached_file_uploader("Ngarko formularin XLS (.xlsx):", ["xlsx"], "chk_xlsx_upload")
-    source_file = cached_file_uploader(
-        "Ngarko pyetësorin origjinal, me të cilin krahasohen filtrat (.docx, .xlsx, .pdf, .txt, .csv):",
-        qai.SOURCE_TYPES, "chk_source_upload")
+    with ubo_ui.card("Ngarkoni formularin dhe pyetësorin", step=2):
+        xls_file = cached_file_uploader("Ngarko formularin XLS (.xlsx):", ["xlsx"], "chk_xlsx_upload")
+        source_file = cached_file_uploader(
+            "Ngarko pyetësorin origjinal, me të cilin krahasohen filtrat (.docx, .xlsx, .pdf, .txt, .csv):",
+            qai.SOURCE_TYPES, "chk_source_upload")
     if not xls_file or not source_file:
         return
     xls_bytes = xls_file.getvalue()
     source_bytes = source_file.getvalue()
     reset_state_for_file("chkres_", hashlib.sha1(xls_bytes + b"|" + source_bytes).hexdigest())
 
-    if st.button("Kontrollo filtrat"):
+    if st.button("Kontrollo filtrat", type="primary"):
         try:
             sheets = qai.read_form(xls_bytes)
             source_blocks = qai.load_source(source_file.name, source_bytes)
@@ -1230,7 +1241,7 @@ def render_filter_check():
                 st.warning("Mungon çelësi `ANTHROPIC_API_KEY` – u kryen vetëm testet automatike, pa kontrollin nga AI.")
             else:
                 with st.spinner("Claude po kontrollon filtrat..."):
-                    review, usage = qai.review_filters(client, sheets, report, source_blocks)
+                    review, usage = ubo_ui.interruptible(qai.review_filters, client, sheets, report, source_blocks)
                     cost = qai.estimate_cost(usage)
                 fixes = [i for i in review["issues"] if i["action"] in ("replace", "remove")]
                 if fixes:
@@ -1312,7 +1323,7 @@ if uploaded_file:
     lines = None
     if questionnaire_kind == SOURCE_TAGGED:
         if doc_lines is None:
-            st.error(f"Pyetësori i formatuar me tag-e duhet të jetë .docx. Për skedarë të tjerë zgjidh **'{SOURCE_PLAIN}'**.")
+            st.error(f"Pyetësori i formatuar me tag-e duhet të jetë .docx. Për dokumente të tjera zgjidh **'{SOURCE_PLAIN}'**.")
             st.stop()
         if not doc_lines:
             st.error("Dokumenti nuk përmban tekst të lexueshëm.")
@@ -1329,7 +1340,7 @@ if uploaded_file:
             needs_ai = translation_mode in (TR_AI, TR_SEPARATE)
             with st.spinner("Gemini po përkthen pyetësorin..." if needs_ai else "Po përgatiten gjuhët..."):
                 try:
-                    lang_result = apply_languages(doc_lines)
+                    lang_result = ubo_ui.interruptible(apply_languages, doc_lines)
                 except qai.AIError as e:
                     st.error(str(e))
                     st.stop()
@@ -1341,196 +1352,196 @@ if uploaded_file:
         show_notes("Shënime për gjuhët:", lang_notes)
 
     if lines is None:
-        if doc_lines and has_tags(doc_lines):
-            st.info(f"Ky dokument duket se ka tag-e. Nëse është i formatuar tashmë, zgjidh më lart "
-                    f"**'{SOURCE_TAGGED}'** për ta koduar drejtpërdrejt, pa kosto AI.")
-        st.info("AI do ta formatojë pyetësorin (llojet e pyetjeve, opsionet, seksionet) "
-                "dhe do ta gjenerojë direkt formularin XLS.")
-        if st.button("Gjenero formularin XLS me AI"):
-            client = get_claude_client()
-            if client is None:
-                st.error("Mungon çelësi `ANTHROPIC_API_KEY` në secrets të aplikacionit.")
-                st.stop()
-            with st.spinner("Claude po lexon pyetësorin dhe po përcakton llojet e pyetjeve..."):
-                try:
-                    ai_lines, ai_notes, usage = qai.convert_questionnaire(client, source_blocks, language_note())
-                except qai.AIError as e:
-                    st.error(str(e))
+        with ubo_ui.card("Formatimi me AI", step=5):
+            if doc_lines and has_tags(doc_lines):
+                st.info(f"Ky dokument duket se ka tag-e. Nëse është i formatuar tashmë, zgjidh më lart "
+                        f"**'{SOURCE_TAGGED}'** për ta koduar drejtpërdrejt, pa kosto AI.")
+            st.info("AI do ta formatojë pyetësorin (llojet e pyetjeve, opsionet, seksionet) "
+                    "dhe do ta gjenerojë direkt formularin XLS.")
+            if st.button("Gjenero formularin XLS me AI", type="primary"):
+                client = get_claude_client()
+                if client is None:
+                    st.error("Mungon çelësi `ANTHROPIC_API_KEY` në secrets të aplikacionit.")
                     st.stop()
-            format_cost = qai.estimate_cost(usage)
-            # Second check against the questionnaire: every question present, notes / introductions in place
-            with st.spinner("Claude po kontrollon për së dyti që të gjitha pyetjet dhe shënimet janë në vendin e tyre..."):
-                try:
-                    ai_lines, review_changes, review_cost = qai.review_completeness(client, source_blocks, ai_lines)
-                    ai_notes = ai_notes + review_changes
-                    format_cost += review_cost
-                except qai.AIError as e:
-                    st.warning(f"Kontrolli i dytë i pyetjeve dhe shënimeve nuk u krye: {e}")
-            # Languages: kept in the chosen order, or translated / merged by Gemini
-            with st.spinner("Gemini po përkthen pyetësorin..." if translation_mode in (TR_AI, TR_SEPARATE)
-                            else "Po përgatiten gjuhët..."):
-                try:
-                    ai_lines, lang_notes, lang_cost = apply_languages(ai_lines)
-                    ai_notes = ai_notes + lang_notes
-                    format_cost += lang_cost
-                except qai.AIError as e:
-                    st.error(str(e))
-                    st.stop()
-            # Retest the translations of a merged questionnaire: lines left in one language are filled in from it
-            if translation_mode == TR_MERGED and qai.check_translations(ai_lines):
-                with st.spinner("Disa tekste nuk janë përkthyer – Claude po i plotëson dhe po i riteston..."):
+                with st.spinner("Claude po lexon pyetësorin dhe po përcakton llojet e pyetjeve..."):
                     try:
-                        ai_lines, _, translation_notes, translation_cost = qai.repair_translations(
-                            client, source_blocks, ai_lines)
-                        ai_notes = ai_notes + translation_notes
-                        format_cost += translation_cost
+                        ai_lines, ai_notes, usage = ubo_ui.interruptible(qai.convert_questionnaire, client, source_blocks, language_note())
                     except qai.AIError as e:
-                        st.warning(f"Përkthimet që mungojnë nuk u plotësuan: {e}")
-            for k in [k for k in st.session_state if k.startswith("gen_") and k != "gen_file_key"]:
-                del st.session_state[k]
-            st.session_state["gen_tagged"] = "\n".join(ai_lines)
-            st.session_state["gen_notes"] = ai_notes
-            st.session_state["gen_format_cost"] = format_cost
-            st.session_state["gen_lang_config"] = lang_config
-            st.session_state["gen_autogenerate"] = True   # build the XLS right away, with the settings below
-        if "gen_tagged" not in st.session_state:
-            st.stop()
-        if st.session_state.get("gen_lang_config") != lang_config:
-            st.warning("Gjuhët ose mënyra e përkthimit ndryshuan pas formatimit. Klikoni përsëri "
-                       "**'Gjenero formularin XLS me AI'** që formulari të dalë në gjuhët e zgjedhura.")
+                        st.error(str(e))
+                        st.stop()
+                format_cost = qai.estimate_cost(usage)
+                # Second check against the questionnaire: every question present, notes / introductions in place
+                with st.spinner("Claude po kontrollon për së dyti që të gjitha pyetjet dhe shënimet janë në vendin e tyre..."):
+                    try:
+                        ai_lines, review_changes, review_cost = ubo_ui.interruptible(qai.review_completeness, client, source_blocks, ai_lines)
+                        ai_notes = ai_notes + review_changes
+                        format_cost += review_cost
+                    except qai.AIError as e:
+                        st.warning(f"Kontrolli i dytë i pyetjeve dhe shënimeve nuk u krye: {e}")
+                # Languages: kept in the chosen order, or translated / merged by Gemini
+                with st.spinner("Gemini po përkthen pyetësorin..." if translation_mode in (TR_AI, TR_SEPARATE)
+                                else "Po përgatiten gjuhët..."):
+                    try:
+                        ai_lines, lang_notes, lang_cost = ubo_ui.interruptible(apply_languages, ai_lines)
+                        ai_notes = ai_notes + lang_notes
+                        format_cost += lang_cost
+                    except qai.AIError as e:
+                        st.error(str(e))
+                        st.stop()
+                # Retest the translations of a merged questionnaire: lines left in one language are filled in from it
+                if translation_mode == TR_MERGED and qai.check_translations(ai_lines):
+                    with st.spinner("Disa tekste nuk janë përkthyer – Claude po i plotëson dhe po i riteston..."):
+                        try:
+                            ai_lines, _, translation_notes, translation_cost = ubo_ui.interruptible(qai.repair_translations,
+                                client, source_blocks, ai_lines)
+                            ai_notes = ai_notes + translation_notes
+                            format_cost += translation_cost
+                        except qai.AIError as e:
+                            st.warning(f"Përkthimet që mungojnë nuk u plotësuan: {e}")
+                for k in [k for k in st.session_state if k.startswith("gen_") and k != "gen_file_key"]:
+                    del st.session_state[k]
+                st.session_state["gen_tagged"] = "\n".join(ai_lines)
+                st.session_state["gen_notes"] = ai_notes
+                st.session_state["gen_format_cost"] = format_cost
+                st.session_state["gen_lang_config"] = lang_config
+                st.session_state["gen_autogenerate"] = True   # build the XLS right away, with the settings below
+            if "gen_tagged" not in st.session_state:
+                st.stop()
+            if st.session_state.get("gen_lang_config") != lang_config:
+                st.warning("Gjuhët ose mënyra e përkthimit ndryshuan pas formatimit. Klikoni përsëri "
+                           "**'Gjenero formularin XLS me AI'** që formulari të dalë në gjuhët e zgjedhura.")
 
-        with st.expander("Pyetësori i formatuar nga AI – korrigjo llojet e pyetjeve nëse duhet, "
-                         "pastaj rigjenero formularin"):
-            tagged_text = st.text_area("Pyetësori i formatuar", key="gen_tagged", height=400,
-                                       label_visibility="collapsed")
-        lines = [line.strip() for line in tagged_text.split('\n') if line.strip()]
-        show_notes("Shënime nga AI:", st.session_state.get("gen_notes"))
+            with st.expander("Pyetësori i formatuar nga AI – korrigjo llojet e pyetjeve nëse duhet, "
+                             "pastaj rigjenero formularin"):
+                tagged_text = st.text_area("Pyetësori i formatuar", key="gen_tagged", height=400,
+                                           label_visibility="collapsed")
+            lines = [line.strip() for line in tagged_text.split('\n') if line.strip()]
+            show_notes("Shënime nga AI:", st.session_state.get("gen_notes"))
 
-    data_collection_method = st.selectbox(
-    "Metoda e mbledhjes së të dhënave:",
-    ["Face to face", "Telefon/Online"]
-    )
-
-    has_variable_names = any(option_tag(line, "name") for line in lines)
-    coding_mode = st.radio(
-    "Si të kodohen pyetjet që kanë numërim në Word?",
-    options=[
-        "P1, P2, P3, ...",
-        "Q1, Q2, Q3, ...",
-        CODING_ORIGINAL,
-        CODING_VARIABLES
-    ], index=3 if has_variable_names else 2)
-
-    # Extract question numbers (e.g., 1, D1, 2a, Q1.2 etc.)
-    question_options = []
-    unnumbered_questions = []
-    for line in lines:
-        try:
-            # Skip section headers entirely — they're treated as [other]
-            if is_section_header(line):
-                continue
-
-            # Extract all tags from this line (e.g., [random][single][hint: ...])
-            tags = extract_tags(line)
-            q_type, _, _, _ = parse_question_tags(tags)
-
-            # Only process lines that define a question type (skip [other] and [note] — they get filtered out / don't need numbers)
-            if q_type and q_type not in ("other", "note") + STRUCTURE_TYPES:
-                qnum, label_text = extract_question_number_and_text(strip_type(line))
-                if label_text:
-                    question_options.append(label_text)
-                if not qnum and label_text:
-                    unnumbered_questions.append(label_text)
-
-        except ValueError as e:
-            st.error(f"Gabim në rreshtin: **{line}**\n\n{str(e)}")
-            st.stop()
-
-    is_original_mode = coding_mode == CODING_ORIGINAL
-    block_generation = False
-    if unnumbered_questions:
-        if is_original_mode:
-            st.error(
-                "**Janë gjetur pyetje pa numërim në dokumentin Word.**\n\n"
-                "Ju keni zgjedhur modalitetin **'Ruaj numërimin origjinal'**, por pyetjet e mëposhtme nuk kanë numër "
-                "dhe do të marrin emra automatikë (P1, P2, ...), duke krijuar një përzierje me numërimin origjinal.\n\n"
-                "Ju lutemi shtoni numra në dokumentin Word për këto pyetje, ose zgjidhni një modalitet tjetër kodimi:"
-            )
-            for q in unnumbered_questions:
-                st.markdown(f"- {q}")
-            block_generation = True
-        else:
-            st.warning(
-                "**Janë gjetur pyetje pa numërim.** Këto do të marrin emra automatikë (P{n} ose Q{n}):"
-            )
-            for q in unnumbered_questions:
-                st.markdown(f"- {q}")
-
-    orphan_lines = find_orphan_lines(lines)
-    if orphan_lines:
-        st.warning(
-            "**Janë gjetur paragrafë pa tag dhe pa lidhje me ndonjë pyetje.** "
-            "Këto rreshta do të injorohen plotësisht (nuk do të shfaqen në formular). "
-            "Nëse janë pyetje, shto një tag (p.sh. `[single]`, `[text]`); nëse janë seksione, fillojini me `Section` ose `Seksion`, ose shtoni tag-un `[section]`:"
+    settings_step = 5 if questionnaire_kind == SOURCE_TAGGED else 6
+    with ubo_ui.card("Cilësimet e formularit", step=settings_step):
+        data_collection_method = st.selectbox(
+        "Metoda e mbledhjes së të dhënave:",
+        ["Ballë për ballë", "Telefon/Online"]
         )
-        for o in orphan_lines:
-            st.markdown(f"- {o}")
 
-    st.session_state["question_lines"] = lines
-    selected_questions = st.multiselect(
-        "Zgjidh pyetjet që NUK dëshiron të kodosh:",
-        options=question_options,
-        default=None
-    )
-    st.session_state["selected_questions"] = selected_questions
+        has_variable_names = any(option_tag(line, "name") for line in lines)
+        coding_mode = st.radio(
+        "Si të kodohen pyetjet që kanë numërim në Word?",
+        options=[
+            "P1, P2, P3, ...",
+            "Q1, Q2, Q3, ...",
+            CODING_ORIGINAL,
+            CODING_VARIABLES
+        ], index=3 if has_variable_names else 2)
 
+        # Extract question numbers (e.g., 1, D1, 2a, Q1.2 etc.)
+        question_options = []
+        unnumbered_questions = []
+        for line in lines:
+            try:
+                # Skip section headers entirely — they're treated as [other]
+                if is_section_header(line):
+                    continue
 
-    if data_collection_method:
-        generate_button = st.button("Gjenero formularin XLS", disabled=block_generation)
-        autogenerate = st.session_state.pop("gen_autogenerate", False) and not block_generation
-        if generate_button or autogenerate:
-            generated_name = f"{base_name}_gjeneruar.xlsx"
-            temp_xlsx_path = os.path.join(tempfile.gettempdir(), generated_name)
-            error = None
-            generation_warnings = []
-            routing = {}   # [ask if] / [skip] notes captured while generating, used by the filter step
-            with st.spinner("Po përpunon dokumentin..."):
-                data_method = data_collection_method == "Face to face"
-                try:
-                    skipped = generate_xlsform(None, temp_xlsx_path, coding_mode, data_method,
-                                               st.session_state.get("selected_questions", None), lines=lines,
-                                               warnings=generation_warnings, routing=routing)
-                except Exception as e:
-                    error = str(e)
-            # Final translation test on the lines the form was built from
-            generation_warnings += qai.translation_warnings(qai.check_translations(lines))
+                # Extract all tags from this line (e.g., [random][single][hint: ...])
+                tags = extract_tags(line)
+                q_type, _, _, _ = parse_question_tags(tags)
 
-            if error:
-                st.error(f"Gabimi: {error}")
-            else:
-                filter_result = add_ai_filters(temp_xlsx_path, source_blocks, routing)
-                st.session_state["gen_xlsx_data"] = filter_result["xlsx"]
-                st.session_state["gen_xlsx_name"] = generated_name
-                st.session_state["gen_skipped_other_questions"] = skipped
-                st.session_state["gen_warnings"] = generation_warnings
-                st.session_state["gen_filter_result"] = filter_result
+                # Only process lines that define a question type (skip [other] and [note] — they get filtered out / don't need numbers)
+                if q_type and q_type not in ("other", "note") + STRUCTURE_TYPES:
+                    qnum, label_text = extract_question_number_and_text(strip_type(line))
+                    if label_text:
+                        question_options.append(label_text)
+                    if not qnum and label_text:
+                        unnumbered_questions.append(label_text)
 
-        if st.session_state.get("gen_xlsx_data"):
-            st.success("Formulari XLS u gjenerua me sukses!")
-            st.download_button(
-                label="Shkarko formularin XLS",
-                data=st.session_state["gen_xlsx_data"],
-                file_name=st.session_state["gen_xlsx_name"],
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
-            if st.session_state.get("gen_warnings"):
-                st.warning("**Kontrollo këto në formular:**\n\n"
-                           + "\n".join(f"- {w}" for w in st.session_state["gen_warnings"]))
-            if st.session_state.get("gen_skipped_other_questions"):
-                st.info("Pyetjet me tag-un [other] që u anashkaluan:")
-                for q in st.session_state["gen_skipped_other_questions"]:
+            except ValueError as e:
+                st.error(f"Gabim në rreshtin: **{line}**\n\n{str(e)}")
+                st.stop()
+
+        is_original_mode = coding_mode == CODING_ORIGINAL
+        block_generation = False
+        if unnumbered_questions:
+            if is_original_mode:
+                st.error(
+                    "**Janë gjetur pyetje pa numërim në dokumentin Word.**\n\n"
+                    "Ju keni zgjedhur modalitetin **'Ruaj numërimin origjinal'**, por pyetjet e mëposhtme nuk kanë numër "
+                    "dhe do të marrin emra automatikë (P1, P2, ...), duke krijuar një përzierje me numërimin origjinal.\n\n"
+                    "Ju lutemi shtoni numra në dokumentin Word për këto pyetje, ose zgjidhni një modalitet tjetër kodimi:"
+                )
+                for q in unnumbered_questions:
                     st.markdown(f"- {q}")
-            show_filter_results(st.session_state["gen_filter_result"])
+                block_generation = True
+            else:
+                st.warning(
+                    "**Janë gjetur pyetje pa numërim.** Këto do të marrin emra automatikë (P{n} ose Q{n}):"
+                )
+                for q in unnumbered_questions:
+                    st.markdown(f"- {q}")
+
+        orphan_lines = find_orphan_lines(lines)
+        if orphan_lines:
+            st.warning(
+                "**Janë gjetur paragrafë pa tag dhe pa lidhje me ndonjë pyetje.** "
+                "Këto rreshta do të injorohen plotësisht (nuk do të shfaqen në formular). "
+                "Nëse janë pyetje, shto një tag (p.sh. `[single]`, `[text]`); nëse janë seksione, fillojini me `Section` ose `Seksion`, ose shtoni tag-un `[section]`:"
+            )
+            for o in orphan_lines:
+                st.markdown(f"- {o}")
+
+        st.session_state["question_lines"] = lines
+        selected_questions = st.multiselect(
+            "Zgjidh pyetjet që NUK dëshiron të kodosh:",
+            options=question_options,
+            default=None,
+            placeholder="Zgjidhni pyetjet"
+        )
+        st.session_state["selected_questions"] = selected_questions
+
+
+    with ubo_ui.card("Gjenerimi i formularit", step=settings_step + 1):
+        if data_collection_method:
+            generate_button = st.button("Gjenero formularin XLS", type="primary", disabled=block_generation)
+            autogenerate = st.session_state.pop("gen_autogenerate", False) and not block_generation
+            if generate_button or autogenerate:
+                generated_name = f"{base_name}_gjeneruar.xlsx"
+                temp_xlsx_path = os.path.join(tempfile.gettempdir(), generated_name)
+                error = None
+                generation_warnings = []
+                routing = {}   # [ask if] / [skip] notes captured while generating, used by the filter step
+                with st.spinner("Po përpunon dokumentin..."):
+                    data_method = data_collection_method == "Ballë për ballë"
+                    try:
+                        skipped = generate_xlsform(None, temp_xlsx_path, coding_mode, data_method,
+                                                   st.session_state.get("selected_questions", None), lines=lines,
+                                                   warnings=generation_warnings, routing=routing)
+                    except Exception as e:
+                        error = str(e)
+                # Final translation test on the lines the form was built from
+                generation_warnings += qai.translation_warnings(qai.check_translations(lines))
+
+                if error:
+                    st.error(f"Gabimi: {error}")
+                else:
+                    filter_result = add_ai_filters(temp_xlsx_path, source_blocks, routing)
+                    st.session_state["gen_xlsx_data"] = filter_result["xlsx"]
+                    st.session_state["gen_xlsx_name"] = generated_name
+                    st.session_state["gen_skipped_other_questions"] = skipped
+                    st.session_state["gen_warnings"] = generation_warnings
+                    st.session_state["gen_filter_result"] = filter_result
+                    st.session_state["gen_show_ready"] = True   # the "form is ready" popup, once
+
+            if st.session_state.get("gen_xlsx_data"):
+                # the success message and the download are at the end of the page (and in the popup)
+                if st.session_state.get("gen_warnings"):
+                    st.warning("**Kontrollo këto në formular:**\n\n"
+                               + "\n".join(f"- {w}" for w in st.session_state["gen_warnings"]))
+                if st.session_state.get("gen_skipped_other_questions"):
+                    st.info("Pyetjet me tag-un [other] që u anashkaluan:")
+                    for q in st.session_state["gen_skipped_other_questions"]:
+                        st.markdown(f"- {q}")
+                show_filter_results(st.session_state["gen_filter_result"])
 
     total_cost = st.session_state.get("gen_format_cost", 0.0)
     if questionnaire_kind == SOURCE_TAGGED and st.session_state.get("gen_lang_result"):
@@ -1539,3 +1550,10 @@ if uploaded_file:
         total_cost += st.session_state["gen_filter_result"]["cost"]
     if total_cost:
         st.caption(f"Kosto e përafërt e AI: ${total_cost:.2f}")
+
+    # The finished form: at the end of the page, and once as a popup right after it is generated
+    if st.session_state.get("gen_xlsx_data"):
+        with ubo_ui.card("Formulari është gati", step=settings_step + 2):
+            show_form_ready("page")
+        if st.session_state.pop("gen_show_ready", False):
+            ready_dialog()

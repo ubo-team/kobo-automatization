@@ -13,7 +13,8 @@ from concurrent.futures import ThreadPoolExecutor
 
 import google.generativeai as genai
 
-from questionnaire_ai import (AIError, LANG_SEP, TAG_RE, declared_languages, is_tag, strip_tags)
+from questionnaire_ai import (CANCEL, AIError, Cancelled, LANG_SEP, TAG_RE, declared_languages, is_tag,
+                              strip_tags)
 
 GEMINI_MODEL = "gemini-2.5-flash"      # the page can override it with GEMINI_MODEL in secrets
 # USD per 1M tokens (input, output), used only for the cost estimate shown in the UI
@@ -266,8 +267,17 @@ def _batches(items, size):
 
 
 def _run(fn, batches):
+    # the stop signal of the page (ubo_ui.interruptible) is checked before each batch; the pool threads
+    # do not inherit it, so it is passed on here
+    event = CANCEL.get()
+
+    def one(batch):
+        if event is not None and event.is_set():
+            raise Cancelled("Kërkesa u anulua.")
+        return fn(batch)
+
     with ThreadPoolExecutor(max_workers=WORKERS) as pool:
-        return list(pool.map(fn, batches))
+        return list(pool.map(one, batches))
 
 
 def _source_texts(lines):
@@ -330,7 +340,7 @@ def merge_translations(lines, languages, references, model_name=GEMINI_MODEL):
             not_found += len(nf)
             cost += c
         if not_found:
-            notes.append(f"{not_found} tekste nuk u gjetën në skedarin {lang} dhe i përktheu Gemini; kontrolloji.")
+            notes.append(f"{not_found} tekste nuk u gjetën në dokumentin {lang} dhe i përktheu Gemini; kontrolloji.")
     by_text = {lang: {t: texts[lang].get(i) for i, t in items} for lang in languages[1:]}
 
     def text_for(p, slot, k):

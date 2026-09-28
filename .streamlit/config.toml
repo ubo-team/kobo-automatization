@@ -1,2 +1,43 @@
+# Stili i platformës UBO (aitools.uboconsulting.com): e njëjta temë për të gjitha faqet,
+# me një variant të çelët dhe një të errët (butoni lart djathtas kalon nga njëri te tjetri).
 [theme]
-base="light"
+font = "Inter:https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
+headingFont = "Space Grotesk:https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&display=swap"
+showWidgetBorder = true
+baseRadius = "10px"
+buttonRadius = "8px"
+
+[theme.light]
+primaryColor = "#2560E6"
+backgroundColor = "#FBFBFC"
+secondaryBackgroundColor = "#F3F4F8"
+textColor = "#26262B"
+linkColor = "#2560E6"
+borderColor = "#E4E8F2"
+greenColor = "#0B8F76"
+blueColor = "#2560E6"
+
+[theme.light.sidebar]
+backgroundColor = "#F6F7FA"
+secondaryBackgroundColor = "#FFFFFF"
+
+[theme.dark]
+primaryColor = "#5B8DF6"
+backgroundColor = "#111217"
+secondaryBackgroundColor = "#23252E"
+textColor = "#ECEDF2"
+linkColor = "#7FA6FF"
+borderColor = "#343744"
+greenColor = "#22C6A0"
+blueColor = "#5B8DF6"
+
+[theme.dark.sidebar]
+backgroundColor = "#15161C"
+secondaryBackgroundColor = "#1A1B22"
+
+[server]
+# serves the static/ folder at /app/static/ (the logo is loaded as a file, not inside the page HTML)
+enableStaticServing = true
+# no file watcher: with it every new session (every page opened) started ~3 s later, because Streamlit
+# registers all loaded modules for each session. After changing the code, restart the app.
+fileWatcherType = "none"

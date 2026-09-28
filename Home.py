@@ -1,212 +1,39 @@
 import streamlit as st
-import os
 
-
-def load_svg(path):
-    with open(path, "r", encoding="utf-8") as f:
-        return f.read()
-
-st.set_page_config(
-    page_title="UBO AI Tools",
-    layout="wide",
-)
-
-st.markdown("""
-<style>
-
-/* Remove sidebar */
-section[data-testid="stSidebar"] {
-    display: none !important;
-}
-
-div[data-testid="stAppViewContainer"] > .main {
-    margin-left: 0 !important;
-}sa
-
-</style>""", unsafe_allow_html=True)
+import ubo_ui
 
 # ---------------------------------------------------------------
-# SIDEBAR LOGO
+# NAVIGIMI I PLATFORMËS
+# Veglat, emrat dhe grupet vijnë nga ubo_ui.TOOLS (të njëjtat si te kryefaqja).
+# url_path mban lidhjet e vjetra, që linqet ekzistuese të vazhdojnë të punojnë.
 # ---------------------------------------------------------------
-logo_svg_path = "UBO-Logo.svg"
+home = st.Page("kryefaqja.py", title="Kryefaqja", default=True)
+tool_pages = {tool.url_path: st.Page(tool.file, title=tool.title, url_path=tool.url_path) for tool in ubo_ui.TOOLS}
 
-with st.sidebar:
-    if os.path.exists(logo_svg_path):
-        svg_logo = load_svg(logo_svg_path)
-        st.markdown(
-            f"""
-            <div style="display:flex;justify-content:center;margin:15px 0;">
-                <div style="width:150px;">{svg_logo}</div>
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
+# Menyja e Streamlit-it fshihet dhe ndërtohet këtu vetë, vetëm për veglat: kryefaqja nuk ka menu anësore
+# fare (më parë krijohej e pastaj fshihej me CSS, prandaj dukej për një çast kur hapej faqja).
+page = st.navigation([home, *tool_pages.values()], position="hidden")
+tool = next((t for t in ubo_ui.TOOLS if t.url_path == page.url_path), None)
 
+# Për çdo faqe: ngjyrat e temës (e çelët / e errët), butoni i temës dhe dritarja "Ju lutem prisni"
+st.markdown(ubo_ui.base_css(), unsafe_allow_html=True)
+with st.container(key="ubo_js"):
+    st.iframe(ubo_ui.page_script(), height=1)
 
-# ---------------------------------------------------------------
-# CSS PER KARTAT KLIKUESE
-# ---------------------------------------------------------------
-st.markdown("""
-<style>
+if tool is not None:
+    with st.sidebar:
+        st.page_link(home, label="Kryefaqja", width="stretch")
+        for section, (color, _) in ubo_ui.SECTIONS.items():
+            st.markdown(f'<div class="ubo-nav-sec"><i style="background:{color}"></i>{section}</div>',
+                        unsafe_allow_html=True)
+            for t in ubo_ui.TOOLS:
+                if t.section == section:
+                    st.page_link(tool_pages[t.url_path], label=t.title, width="stretch")
+        st.divider()
+        # klikimi mbi logo të kthen gjithmonë në kryefaqe
+        st.markdown(f'<a class="ubo-home-logo" href="/" target="_self" title="Kryefaqja">'
+                    f'{ubo_ui.logo_imgs()}</a>', unsafe_allow_html=True)
+    # kreu i njëjtë për çdo vegël, bashkë me stilin e faqes (zëvendëson titujt e veçantë të faqeve)
+    st.markdown(ubo_ui.tool_header(tool), unsafe_allow_html=True)
 
-.card-button {
-    display: block;
-    background-color: #ffffff;
-    text-decoration: none !important;
-    border-radius: 14px;
-    padding: 30px;
-    height: 230px;
-    color: #000000;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.08);
-    transition: all 0.15s ease;
-    border: 1px solid #eee;
-}
-
-.card-button:hover {
-    transform: translateY(-6px);
-    box-shadow: 0 4px 14px rgba(0,0,0,0.12);
-    border: 2px solid #d0d0ff;
-}
-
-.card-title {
-    font-size: 20px;
-    font-weight: 600;
-    margin: 0;
-    line-height: 1.2;
-}
-
-.card-desc {
-    font-size: 15px;
-    color: #444;
-    margin-top: 20px;
-    min-height: 70px;
-}
-
-.arrow {
-    font-size: 40px;
-    font-weight: bold;
-    color: #0054a3;
-    text-align: right;
-    margin-top: 10px;
-}
-            
-.card-header {
-    display: flex;
-    flex-direction: row;
-    align-items: center;
-    gap: 8px;
-}
-
-.card-header svg {
-    width: 28px;
-    height: 28px;
-    flex-shrink: 0;
-    fill: #0054a3 !important;
-}
-
-</style>
-""", unsafe_allow_html=True)
-
-
-# ---------------------------------------------------------------
-# FUNKSIONI I KARTAVE (CLICKABLE)
-# ---------------------------------------------------------------
-def card(title, description, page, icon_path):
-    svg_content = load_svg(icon_path)
-
-    st.markdown(
-        f"""
-<a href="/{page}" target="_self" class="card-button">
-    <div class="card-header">
-        <div class="svg-icon">{svg_content}</div>
-        <div class="card-title">{title}</div>
-    </div>
-    <div class="card-desc">{description}</div>
-    <div class="arrow">→</div>
-</a>
-""",
-        unsafe_allow_html=True
-    )
-
-
-
-# ---------------------------------------------------------------
-# LAYOUT (3×2 KARTA)
-# ---------------------------------------------------------------
-if os.path.exists(logo_svg_path):
-    main_logo = load_svg(logo_svg_path)
-    st.markdown(
-        f"""
-        <div style="display:flex;justify-content:center;margin-bottom:10px;">
-            <div class="main-logo" style="width:140px;">{main_logo}</div>
-        </div>
-        <style>
-            .main-logo svg {{
-                width: 100%;
-                height: auto;
-            }}
-        </style>
-        """,
-        unsafe_allow_html=True
-    )
-st.markdown("<h1 style='text-align: center;'>Platforma e AI dhe Automatizimit</h1>", unsafe_allow_html=True)
-st.markdown("<p style='text-align: center;'>Zgjidh një nga veglat për të vazhduar</p>", unsafe_allow_html=True)
-st.markdown("---")
-
-# ROW 1
-col1, col2, col3 = st.columns(3)
-
-with col1:
-    card(
-        "Gjenero XLS për KoboToolbox",
-        "Krijo dhe menaxho dokumenta Excel për pyetësorët dhe anketat në mënyrë të automatizuar.",
-        "Gjenero_XLS",
-        "icons/survey-xmark.svg"
-    )
-
-with col2:
-    card(
-        "Përkthim Excel Files AI",
-        "Përkthe Excel automatikisht duke përdorur inteligjencë artificiale për rezultate të shpejta.",
-        "Perkthim_Excel_Files_AI",
-        "icons/file-excel.svg"
-    )
-
-with col3:
-    card(
-        "Përkthim Word Documents AI",
-        "Përkthe dokumente Word shpejt dhe saktë me teknologji të avancuar AI.",
-        "Perkthim_Word_Documents_AI",
-        "icons/file-word.svg"
-    )
-
-
-st.markdown("<div class='row-spacer'></div>", unsafe_allow_html=True)
-
-# ROW 2
-col4, col5, col6 = st.columns(3)
-
-
-with col4:
-    card(
-        "Përkthim Zyrtar",
-        "Përkthime të verifikuara dhe zyrtare për dokumentet që kërkojnë saktësi të plotë.",
-        "Perkthe_Zyrtarisht",
-        "icons/language-exchange.svg"
-    )
-
-with col5:
-    card(
-        "MaxDiff Analysis",
-        "Analizo të dhënat me metodën MaxDiff për rezultate të thelluara.",
-        "MaxDiff_Analysis",
-        "icons/analyse.svg"
-    )
-
-with col6:
-    card(
-        "Grupimi i pyetjeve të hapura",
-        "Grupo pyetjet e hapura sipas kategorive të paracaktuara.",
-        "Grupimi_i_pyetjeve_të_hapura",
-        "icons/grouping.svg"
-    )
+page.run()

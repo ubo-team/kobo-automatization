@@ -1,4 +1,5 @@
 import streamlit as st
+import ubo_ui
 from io import BytesIO
 import os
 import re
@@ -6,29 +7,7 @@ import time
 import google.generativeai as genai
 from docx import Document
 
-st.set_page_config(page_title="Përkthe Word Dokumente me AI", layout="centered")
-
-
-logo_svg_path = "UBO-Logo.svg"
-with st.sidebar:
-    if os.path.exists(logo_svg_path):
-        with open(logo_svg_path, "r", encoding="utf-8") as f:
-            svg_logo = f.read()
-        st.markdown(
-            f'<div style="display:flex;justify-content:center;margin:15px 0;"><div style="width:150px;">{svg_logo}</div></div>',
-            unsafe_allow_html=True
-        )
-    st.markdown("""
-        <style>
-        [data-testid="stSidebar"] img {
-            display: block;
-            margin-left: auto;
-            margin-right: auto;
-            margin-top: 15px;
-            margin-bottom: 15px;
-        }
-        </style>
-    """, unsafe_allow_html=True)
+st.set_page_config(layout="centered")
 
 
 GEMINI_TRANSLATION_API_KEY = st.secrets["GEMINI_TRANSLATION_API_KEY"]
@@ -156,40 +135,40 @@ def translate_docx_in_place(doc, from_lang, to_lang):
     return doc, total_in, total_out, errors
 
 
-st.title("Fillo me Përkthimin e Pyetësorëve")
-
-uploaded_file = st.file_uploader("Ngarko dokumentin (vetëm Word)", type=["docx"])
+with ubo_ui.card("Ngarkoni dokumentin Word", step=1):
+    uploaded_file = st.file_uploader("Ngarko dokumentin (vetëm Word)", type=["docx"], label_visibility="collapsed")
 
 if uploaded_file:
-    from_lang_label = st.selectbox("Gjuha Burimore", list(LANGUAGE_OPTIONS_UI.keys()), key="word_lang_from")
-    to_lang_label = st.selectbox("Gjuha për Përkthim", list(LANGUAGE_OPTIONS_UI.keys()), key="word_lang_to")
-    from_lang = LANGUAGE_OPTIONS_UI[from_lang_label]
-    to_lang = LANGUAGE_OPTIONS_UI[to_lang_label]
+    with ubo_ui.card("Gjuhët dhe përkthimi", step=2):
+        from_lang_label = st.selectbox("Gjuha Burimore", list(LANGUAGE_OPTIONS_UI.keys()), key="word_lang_from")
+        to_lang_label = st.selectbox("Gjuha për Përkthim", list(LANGUAGE_OPTIONS_UI.keys()), key="word_lang_to")
+        from_lang = LANGUAGE_OPTIONS_UI[from_lang_label]
+        to_lang = LANGUAGE_OPTIONS_UI[to_lang_label]
 
-    if st.button("Përkthe Word Dokumentin"):
-        doc = Document(uploaded_file)
-        translated_doc, total_in, total_out, errors = translate_docx_in_place(doc, from_lang, to_lang)
+        if st.button("Përkthe dokumentin Word", type="primary"):
+            doc = Document(uploaded_file)
+            translated_doc, total_in, total_out, errors = translate_docx_in_place(doc, from_lang, to_lang)
 
-        output = BytesIO()
-        translated_doc.save(output)
-        output.seek(0)
+            output = BytesIO()
+            translated_doc.save(output)
+            output.seek(0)
 
-        if errors:
-            st.error(f"Ka pasur {len(errors)} gabime. Gabimi i parë: {errors[0]}")
-        else:
-            st.success("Përkthimi përfundoi me sukses!")
+            if errors:
+                st.error(f"Ka pasur {len(errors)} gabime. Gabimi i parë: {errors[0]}")
+            else:
+                st.success("Përkthimi përfundoi me sukses!")
 
-        model_id = f"models/{MODEL_NAME}"
-        cost = calculate_gemini_cost(total_in, total_out, model_id)
-        st.info(
-            f"**Kostoja:**  \n"
-            f"Input tokens: **{total_in:,}** | Output tokens: **{total_out:,}**  \n"
-            f"Kostoja: **${cost:.4f}**"
-        )
+            model_id = f"models/{MODEL_NAME}"
+            cost = calculate_gemini_cost(total_in, total_out, model_id)
+            st.info(
+                f"**Kostoja:**  \n"
+                f"Tokenë hyrës: **{total_in:,}** | Tokenë dalës: **{total_out:,}**  \n"
+                f"Kostoja: **${cost:.4f}**"
+            )
 
-        st.download_button(
-            label="Shkarko dokumentin e përkthyer (Word)",
-            data=output,
-            file_name=f"translated_{uploaded_file.name}",
-            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-        )
+            st.download_button(
+                label="Shkarko dokumentin e përkthyer (Word)",
+                data=output,
+                file_name=f"translated_{uploaded_file.name}",
+                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            )
