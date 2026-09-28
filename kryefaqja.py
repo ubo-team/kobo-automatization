@@ -175,7 +175,7 @@ ROWS = [["Pyetësorët", "Analiza"], ["Përkthimet"]]
 def tool_card(tool, col, delay):
     c, cd = tool.colors
     badge_html = f'<span class="lp-badge">{tool.badge}</span>' if tool.badge else ""
-    return f"""<a href="/{tool.url_path}" target="_self" class="lp-card lp-anim" style="--c:{c};--cd:{cd};--col:{col};--row:2;animation-delay:{delay:.2f}s">
+    return f"""<a href="{tool.url_path}" target="_self" class="lp-card lp-anim" style="--c:{c};--cd:{cd};--col:{col};--row:2;animation-delay:{delay:.2f}s">
 <div class="lp-ctop"><div class="lp-icon">{ubo_ui.icon_svg(tool, 26)}</div>{badge_html}</div>
 <div class="lp-ctitle">{tool.title}</div>
 <p class="lp-cdesc">{tool.description}</p>
@@ -187,7 +187,7 @@ def tool_card(tool, col, delay):
 # FAQJA (stili dhe përmbajtja në një element, që të shfaqen njëherësh)
 # ---------------------------------------------------------------
 html = [CSS, f"""<div class="lp">
-<a class="lp-logo lp-anim" href="/" target="_self" title="Kryefaqja">{ubo_ui.logo_imgs()}</a>
+<a class="lp-logo lp-anim" href="./" target="_self" title="Kryefaqja">{ubo_ui.logo_imgs()}</a>
 <div class="lp-hero">
 <div class="lp-h1 lp-anim" style="animation-delay:.04s">Platforma e AI dhe <span class="lp-hl">Automatizimit</span></div>
 <p class="lp-lede lp-anim" style="animation-delay:.08s">Veglat e UBO për pyetësorë, përkthime dhe analiza të të dhënave. Zgjidhni një vegël për të vazhduar.</p>

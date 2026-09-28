@@ -59,10 +59,14 @@ TOOLS = [
          "Grupimi_i_pyetjeve_të_hapura", "veglat/Grupimi_i_pyetjeve_të_hapura.py", "icons/grouping.svg", "XLSX", "AI"),
 ]
 
-# Logo si skedar (brenda HTML-së, 58 KB, e vononte faqen me ~2.5 s); në temën e errët teksti "UBO CONSULTING"
-# është i bardhë. Të dyja versionet vendosen në faqe dhe CSS-i shfaq atë të temës aktive.
-LOGO_URL = "/app/static/UBO-Logo.svg"
-LOGO_URL_DARK = "/app/static/UBO-Logo-dark.svg"
+# Logo si skedar (brenda HTML-së, 58 KB, e vononte faqen me ~2.5 s), në PNG (720x360, e krijuar nga SVG-ja):
+# serveri i Streamlit Cloud i jep skedarët statikë që nuk janë PNG/JPG/GIF si tekst, prandaj SVG-ja nuk shfaqej.
+# Në temën e errët teksti "UBO CONSULTING" është i bardhë; të dyja versionet vendosen në faqe dhe CSS-i
+# shfaq atë të temës aktive.
+# Adresa relative (pa "/" në fillim): në Streamlit Cloud aplikacioni është nën /~/+/, dhe "/app/static/…"
+# do të kërkohej te faqja e jashtme, jo te aplikacioni.
+LOGO_URL = "app/static/UBO-Logo.png"
+LOGO_URL_DARK = "app/static/UBO-Logo-dark.png"
 
 
 def logo_imgs():
@@ -242,9 +246,16 @@ def page_script():
   }
 
   // Switch through Streamlit's own menu (no reload: the uploaded files stay)
-  function setTheme(name) {
+  // The user's choice (our own key, the same for every page); without one the platform opens in Light
+  function wantedTheme() {
+    try { return P.localStorage.getItem("ubo-theme") || "light"; } catch (e) { return "light"; }
+  }
+
+  // auto = the default applied on page load: then never the reload fallback (it could loop)
+  function setTheme(name, auto) {
+    if (!auto) { try { P.localStorage.setItem("ubo-theme", name); } catch (e) {} }
     const menuBtn = D.querySelector('[data-testid="stMainMenuButton"]');
-    if (!menuBtn) return fallback(name);
+    if (!menuBtn) return auto ? null : fallback(name);
     D.documentElement.classList.add("ubo-switching");
     menuBtn.click();
     let tries = 0;
@@ -264,7 +275,7 @@ def page_script():
       } else {
         D.documentElement.classList.remove("ubo-switching");
         if (D.querySelector('[data-testid="stMainMenuPopover"]')) menuBtn.click();
-        fallback(name);
+        if (!auto) fallback(name);
       }
     };
     setTimeout(pick, 60);
@@ -326,6 +337,14 @@ def page_script():
   let since = null;
   function tick() {
     syncTheme();
+    // once per page load: show the chosen theme (Light by default), also when the computer is in dark mode
+    if (!P.__uboThemeApplied) {
+      const t = currentTheme();
+      if (t && D.querySelector('[data-testid="stMainMenuButton"]')) {
+        P.__uboThemeApplied = true;
+        if (t !== wantedTheme()) setTheme(wantedTheme(), true);
+      }
+    }
     ensureThemeButton();
     const box = ensureWaitBox();
     const running = !!D.querySelector('[data-testid="stStatusWidgetRunningIcon"], [data-testid="stStatusWidgetRunningManIcon"]');

@@ -31,7 +31,7 @@ if tool is not None:
                     st.page_link(tool_pages[t.url_path], label=t.title, width="stretch")
         st.divider()
         # klikimi mbi logo të kthen gjithmonë në kryefaqe
-        st.markdown(f'<a class="ubo-home-logo" href="/" target="_self" title="Kryefaqja">'
+        st.markdown(f'<a class="ubo-home-logo" href="./" target="_self" title="Kryefaqja">'
                     f'{ubo_ui.logo_imgs()}</a>', unsafe_allow_html=True)
     # kreu i njëjtë për çdo vegël, bashkë me stilin e faqes (zëvendëson titujt e veçantë të faqeve)
     st.markdown(ubo_ui.tool_header(tool), unsafe_allow_html=True)
