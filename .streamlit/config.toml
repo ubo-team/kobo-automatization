@@ -38,6 +38,7 @@ secondaryBackgroundColor = "#1A1B22"
 [server]
 # serves the static/ folder at /app/static/ (the logo is loaded as a file, not inside the page HTML)
 enableStaticServing = true
-# no file watcher: with it every new session (every page opened) started ~3 s later, because Streamlit
-# registers all loaded modules for each session. After changing the code, restart the app.
-fileWatcherType = "none"
+# The file watcher is on (Streamlit's default), so the live app picks up a push without a reboot.
+# It makes every newly opened page ~3 s slower; "none" is faster, but then the app must be rebooted
+# after each change of the code.
+fileWatcherType = "auto"
