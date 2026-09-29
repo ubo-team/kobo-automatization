@@ -1,6 +1,14 @@
+import importlib
+import os
+
 import streamlit as st
 
 import ubo_ui
+
+# Pas një push-i, Streamlit Cloud e lexon përsëri këtë skedar, por mund të mbajë në memorie ubo_ui.py-në e
+# vjetër (faqja atëherë thërret funksione që s'ekzistojnë). Kur skedari në disk është më i ri, ringarkohet.
+if os.path.getmtime(ubo_ui.__file__) > getattr(ubo_ui, "LOADED_AT", 0):
+    ubo_ui = importlib.reload(ubo_ui)
 
 # ---------------------------------------------------------------
 # NAVIGIMI I PLATFORMËS

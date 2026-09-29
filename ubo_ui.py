@@ -11,8 +11,11 @@ Fontet, ngjyra kryesore dhe rrumbullakimet e Streamlit-it vijnë nga tema te .st
 import json
 import os
 import re
+import time
 from dataclasses import dataclass
 from urllib.parse import quote
+
+LOADED_AT = time.time()     # Home.py e ringarkon modulin kur skedari është më i ri se kjo
 
 SECTIONS = {
     # grupi: (ngjyra, ngjyra e errët për tekst mbi sfond të çelët)
