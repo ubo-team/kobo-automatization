@@ -22,17 +22,19 @@ with st.container(key="ubo_js"):
 
 if tool is not None:
     with st.sidebar:
-        st.page_link(home, label="Kryefaqja", width="stretch")
-        for section, (color, _) in ubo_ui.SECTIONS.items():
-            st.markdown(f'<div class="ubo-nav-sec"><i style="background:{color}"></i>{section}</div>',
-                        unsafe_allow_html=True)
-            for t in ubo_ui.TOOLS:
-                if t.section == section:
-                    st.page_link(tool_pages[t.url_path], label=t.title, width="stretch")
-        st.divider()
-        # klikimi mbi logo të kthen gjithmonë në kryefaqe
+        # logo lart; klikimi mbi të të kthen gjithmonë në kryefaqe
         st.markdown(f'<a class="ubo-home-logo" href="./" target="_self" title="Kryefaqja">'
                     f'{ubo_ui.logo_imgs()}</a>', unsafe_allow_html=True)
+        # menyja me ngjyra: çdo vegël me ngjyrën e grupit të saj, vegla aktive e theksuar
+        st.markdown(ubo_ui.sidebar_css(tool), unsafe_allow_html=True)
+        st.page_link(home, label="Kryefaqja", icon=ubo_ui.NAV_ICONS[""], width="stretch")
+        for section, (color, dark) in ubo_ui.SECTIONS.items():
+            st.markdown(f'<div class="ubo-nav-sec" style="--c:{color};--cd:{dark}"><i style="background:{color}"></i>'
+                        f'{section}</div>', unsafe_allow_html=True)
+            for t in ubo_ui.TOOLS:
+                if t.section == section:
+                    st.page_link(tool_pages[t.url_path], label=t.title, icon=ubo_ui.NAV_ICONS.get(t.url_path),
+                                 width="stretch")
     # kreu i njëjtë për çdo vegël, bashkë me stilin e faqes (zëvendëson titujt e veçantë të faqeve)
     st.markdown(ubo_ui.tool_header(tool), unsafe_allow_html=True)
 

@@ -541,11 +541,15 @@ label[data-testid="stWidgetLabel"] { margin-bottom: 4px; }
     color: var(--ubo-muted); margin: 1.1rem 0 0.2rem 0.3rem;
 }
 .ubo-nav-sec i { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 7px; vertical-align: 1px; }
-a.ubo-home-logo { display: block; width: 170px; margin: 18px auto; transition: opacity .15s; }
+/* logo lart në menu, e vogël, me një vijë poshtë saj */
+a.ubo-home-logo {
+    display: block; margin: 0 0 12px; padding: 0 0 16px 8px; transition: opacity .15s;
+    border-bottom: 1px solid var(--ubo-line);
+}
 a.ubo-home-logo:hover { opacity: .8; }
 /* Streamlit u jep figurave object-fit: scale-down, që nuk e zmadhon SVG-në 120x60 */
 a.ubo-home-logo img {
-    width: 170px !important; max-width: none !important; height: auto !important;
+    width: 125px !important; max-width: none !important; height: auto !important;
     aspect-ratio: 2 / 1; object-fit: contain !important; display: block;
 }
 /* lidhjet e menysë afër njëra-tjetrës, si te menyja e Streamlit-it */
@@ -564,6 +568,60 @@ def card(title, step=None, subtitle="", key=None):
     sub_html = f'<div class="ubo-card-sub">{subtitle}</div>' if subtitle else ""
     box.markdown(f'<div class="ubo-card-head">{step_html}{title}</div>{sub_html}', unsafe_allow_html=True)
     return box
+
+
+# Ikonat e veglave në menunë anësore (Material Symbols të Streamlit-it)
+NAV_ICONS = {
+    "": ":material/home:",
+    "Gjenero_XLS": ":material/fact_check:",
+    "Perkthim_Excel_Files_AI": ":material/table_view:",
+    "Perkthim_Word_Documents_AI": ":material/description:",
+    "Perkthe_Zyrtarisht": ":material/translate:",
+    "MaxDiff_Analysis": ":material/leaderboard:",
+    "Grupimi_i_pyetjeve_të_hapura": ":material/category:",
+}
+
+
+def sidebar_css(active):
+    """Menyja anësore me ngjyra: çdo lidhje me ngjyrën e grupit të saj (ikona, sfondi kur kalon miu),
+    vegla aktive me sfond, vijë anësore dhe tekst me ngjyrën e grupit; sfondi i menysë merr lehtë
+    ngjyrën e grupit të veglës aktive."""
+    links = ""
+    for t in TOOLS:
+        c, cd = SECTIONS[t.section]
+        for href in {t.url_path, quote(t.url_path)}:
+            links += f'[data-testid="stSidebar"] a[href="{href}"] {{ --c: {c}; --cd: {cd}; }} '
+    hrefs = sorted({active.url_path, quote(active.url_path)})
+    active_sel = ", ".join(f'[data-testid="stSidebar"] a[href="{h}"]' for h in hrefs)
+    active_text = ", ".join(f'[data-testid="stSidebar"] a[href="{h}"] p' for h in hrefs)
+    return "<style>" + links + """
+[data-testid="stSidebar"] {
+    background: linear-gradient(180deg, color-mix(in srgb, var(--ubo-c) 9%, var(--ubo-sidebar)) 0%,
+                var(--ubo-sidebar) 320px) !important;
+}
+[data-testid="stSidebar"] a[data-testid="stPageLink-NavLink"] {
+    border-radius: 10px; padding: 6px 10px; margin: 1px 0;
+    transition: background-color .15s, box-shadow .15s;
+}
+[data-testid="stSidebar"] a[data-testid="stPageLink-NavLink"] [data-testid="stIconMaterial"] {
+    color: var(--c, var(--ubo-muted)); font-size: 1.15rem;
+}
+[data-testid="stSidebar"] a[data-testid="stPageLink-NavLink"]:hover {
+    background: color-mix(in srgb, var(--c, #8a8fa0) 11%, transparent) !important;
+}
+""" + active_sel + """ {
+    background: color-mix(in srgb, var(--c) 15%, var(--ubo-surface)) !important;
+    box-shadow: inset 3px 0 0 var(--c);
+}
+""" + active_text + """ {
+    color: var(--cd) !important; font-weight: 700 !important;
+}
+/* emrat e grupeve me ngjyrën e grupit */
+.ubo-nav-sec { color: var(--cd) !important; }
+html[data-ubo-theme="dark"] [data-testid="stSidebar"] a, html[data-ubo-theme="dark"] .ubo-nav-sec {
+    --cd: color-mix(in srgb, var(--c) 62%, #ffffff) !important;
+}
+</style>"""
 
 
 def tool_header(tool):

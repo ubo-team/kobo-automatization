@@ -15,6 +15,15 @@ import ubo_ui
 
 st.set_page_config(layout="centered")
 
+# Right after "Gjenero një formular të ri": back to the top of the page, with a short notice
+if st.session_state.pop("form_new_started", None):
+    st.toast("Gati për një formular të ri: ngarkoni pyetësorin.")
+    st.iframe(f"""<script>/* {st.session_state.get('form_round', 0)} */
+        const main = window.parent.document.querySelector('[data-testid="stMain"]');
+        if (main) main.scrollTo({{top: 0, behavior: 'smooth'}});
+        window.parent.scrollTo({{top: 0, behavior: 'smooth'}});
+        </script>""", height=1)
+
 
 class CachedFile:
     """Stand-in for an UploadedFile, rebuilt from the copy kept in session_state."""
@@ -26,9 +35,9 @@ class CachedFile:
         return self._data
 
 
-def _sync_upload_cache(key):
+def _sync_upload_cache(widget_key, key):
     """Runs only when the user uploads or removes a file, not when the widget is reset by a rerun."""
-    f = st.session_state.get(key)
+    f = st.session_state.get(widget_key)
     if f is None:
         st.session_state.pop(key + "_cache", None)
     else:
@@ -37,7 +46,11 @@ def _sync_upload_cache(key):
 
 def cached_file_uploader(label, types, key):
     """File uploader whose file survives switching the options above it (Streamlit drops the widget's file then)."""
-    uploaded = st.file_uploader(label, type=types, key=key, on_change=_sync_upload_cache, args=(key,))
+    # a new key for every new form ("Gjenero një formular të ri"): Streamlit cannot empty an upload box, but a
+    # box with a new key starts empty
+    widget_key = f"{key}_r{st.session_state.get('form_round', 0)}"
+    uploaded = st.file_uploader(label, type=types, key=widget_key, on_change=_sync_upload_cache,
+                                args=(widget_key, key))
     if uploaded is not None:
         return uploaded
     cached = st.session_state.get(key + "_cache")
@@ -1114,11 +1127,30 @@ def show_form_ready(where):
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         type="primary",
         key=f"download_form_{where}",
-        on_click="ignore",   # downloading does not rerun the page (and does not close the popup)
+        # remembers the download; in the popup only the popup reruns, so it stays open with the button below
+        on_click=_mark_downloaded,
     )
+    # only after the form has been downloaded
+    if st.session_state.get("gen_downloaded"):
+        if st.button("Gjenero një formular të ri", key=f"new_form_{where}", icon=":material/add:"):
+            start_new_form()
+            st.rerun()          # the whole page (also from the popup, which then closes)
 
 
-@st.dialog("Formulari XLS është gati")
+def _mark_downloaded():
+    st.session_state["gen_downloaded"] = True
+
+
+def start_new_form():
+    """The uploaded questionnaire(s) and all results go; the choices above (way of working, languages,
+    translation) stay, so a new questionnaire can be uploaded right away."""
+    for k in [k for k in st.session_state if k.startswith("gen_") or (k.startswith("upload_") and k.endswith("_cache"))]:
+        del st.session_state[k]
+    st.session_state["form_round"] = st.session_state.get("form_round", 0) + 1
+    st.session_state["form_new_started"] = True
+
+
+@st.dialog("Formulari XLS është gati", on_dismiss="rerun")
 def ready_dialog():
     show_form_ready("popup")
 
