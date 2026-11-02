@@ -2,6 +2,7 @@ import streamlit as st
 import ubo_ui
 import pandas as pd
 import numpy as np
+import re
 from collections import defaultdict
 import pymc as pm
 import arviz as az
@@ -12,7 +13,7 @@ with ubo_ui.card("Të dhënat dhe modeli", step=1):
     uploaded_file = st.file_uploader(
         "Ngarkoni dokumentin CSV me të dhënat MaxDiff", 
         type="csv", 
-        help="Dokumenti duhet të ketë kolonat: Attribute 1–5, Best, Worst (dhe Response ID për modelin HB)"
+        help="Dokumenti duhet të ketë kolonat: Attribute 1, Attribute 2, ... (çdo numër atributesh), Best, Worst (dhe Response ID për modelin HB)"
     )
 
     model_choice = st.selectbox("Modeli i analizës", [
@@ -25,16 +26,31 @@ if uploaded_file and run_analysis:
     with ubo_ui.card("Rezultatet", step=2):
         df = pd.read_csv(uploaded_file)
 
+        # Numri i atributeve për detyrë ndryshon sipas studimit (p.sh. 4 ose 5)
+        attribute_cols = sorted(
+            (col for col in df.columns if re.fullmatch(r"Attribute \d+", col)),
+            key=lambda col: int(col.split()[1])
+        )
+        required_cols = ["Best", "Worst"]
+        if model_choice == "Analiza Bayesiane hierarkike (HB)":
+            required_cols.append("Response ID")
+        missing_cols = [col for col in required_cols if col not in df.columns]
+
+        if len(attribute_cols) < 2 or missing_cols:
+            if len(attribute_cols) < 2:
+                missing_cols.insert(0, "Attribute 1, Attribute 2, ...")
+            st.error(f"Dokumentit i mungojnë kolonat: {', '.join(missing_cols)}")
+            st.stop()
+
         if model_choice == "Numërimi i thjeshtë":
             st.subheader("Rezultatet: numërimi i thjeshtë")
-            attribute_cols = [f"Attribute {i}" for i in range(1, 6)]
             best_counts = defaultdict(int)
             worst_counts = defaultdict(int)
             appearance_counts = defaultdict(int)
             warnings = []
 
             for _, row in df.iterrows():
-                attributes_shown = [row[col] for col in attribute_cols]
+                attributes_shown = [row[col] for col in attribute_cols if pd.notna(row[col])]
                 best = row["Best"]
                 worst = row["Worst"]
 
@@ -81,8 +97,7 @@ if uploaded_file and run_analysis:
         elif model_choice == "Analiza Bayesiane hierarkike (HB)":
             st.subheader("Rezultatet: analiza Bayesiane hierarkike (HB)")
 
-            attribute_cols = [f"Attribute {i}" for i in range(1, 6)]
-            attributes = sorted(set(df[attribute_cols].values.flatten()))
+            attributes = sorted(attr for attr in set(df[attribute_cols].values.flatten()) if pd.notna(attr))
             attr_index = {attr: i for i, attr in enumerate(attributes)}
             n_attrs = len(attributes)
 
