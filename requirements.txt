@@ -5,6 +5,7 @@ streamlit
 starlette<1.4
 pymc
 arviz
+matplotlib
 pandas
 requests
 Pillow
