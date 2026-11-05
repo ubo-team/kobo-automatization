@@ -263,6 +263,22 @@ INPUT_NOTE = ("The questionnaire arrives as Markdown converted from the original
               "line in the form `| cell | cell |`, `<br>` separates lines inside a cell, and `<!-- page N -->` marks "
               "PDF pages.")
 
+# Answer rules ([check: …] tags), shared by the conversion and its second check
+CHECK_RULES = """the form refuses answers that break them, so add a tag only where the rule always holds. A question can have several. IDs are question IDs as written in your lines, of questions that come earlier.
+- `[check: age]` on the question asking the respondent's own age: 18 to 120. Not for anyone else's age, nor for age ranges coded as `[single]`.
+- `[check: age_other]` on a question asking the age of someone else (a child, a household member): 0 to 120. Not for an age at which something happened.
+- `[check: age_birth ID]` when the questionnaire asks both an age and the year or date of birth of the same person: on the later of the two, with the ID of the earlier one. The two must match.
+- `[check: percent]` on a `[numeric]` or `[decimal]` question answered as a percentage from 0 to 100. Not for a percentage that can go below 0 or above 100, such as a change or growth rate.
+- `[check: sum100 ID, ID]` on the last of several separately numbered questions that split a whole into percentages, with the IDs of the earlier ones. Their answers must add up to 100. Also give each of them `[check: percent]`.
+- `[check: count]` on a `[numeric]` question counting people, children, items or times: not negative.
+- `[check: range MIN-MAX]` on a number with a natural limit or a limit stated by the questionnaire, e.g. days in a week `[check: range 0-7]`, hours in a day `[check: range 0-24]`, days in a month `[check: range 0-31]`.
+- `[check: max ID]` on a number that is a part of an earlier total, e.g. the number of children in a household with the ID of the question on household members. It cannot be greater than that total. Add it only when the question is clearly a part of that total.
+- `[check: money]` on an amount of money paid, spent or received: not negative. Not for profit, balance or anything else that can be negative.
+- `[check: name]` on a `[text]` question asking for a person's full name (name and surname): letters only, at least two words. Not for a first name alone.
+- `[check: phone]` on a question asking for a phone number, which is always `[text]`, never `[numeric]`: only valid phone numbers.
+- `[check: email]` on a `[text]` question asking for an email address: only a valid address.
+Questions with `[check: phone]` or `[check: email]` get a "Refused" answer from the program unless you list special answers for them."""
+
 CONVERT_SYSTEM = INPUT_NOTE + """
 
 You convert survey questionnaires into a line-based tagged text format. A strict parser turns these lines into a KoboToolbox XLSForm, so follow the format exactly: it cannot recover from deviations, and a wrong line silently produces a wrong form. The form is used for real fieldwork and analysed by the answer codes, so carry over everything the questionnaire specifies (codes, variable names, languages, types) rather than simplifying it.
@@ -293,6 +309,9 @@ Optional extra tags on question lines:
 - `[name: variable_name]` when the questionnaire gives a variable name for the question (e.g. `hh_study_child_confirm` under the ID CONS1). Copy it exactly.
 - `[random]` when the questionnaire says to rotate or randomise the options.
 - `[hint: text]` an interviewer instruction for that question that the questionnaire does not print in square brackets ("Read out the options", "Do not read"). No square brackets inside the hint; bracketed instructions stay in the text (see markers below).
+- `[check: …]` answer rules, listed below.
+
+Answer rules: """ + CHECK_RULES + """
 
 Option lines contain only the option text, e.g. `Po`: no option numbers, letters, checkboxes or dotted leaders. Keep the questionnaire's order and keep options like "Don't know" / "Refused" when listed. Tags allowed on option lines:
 - `[code: X]` when the questionnaire gives answer codes (Yes 1, No 0, Don't know -98, Refused -99, Other 96 …): copy each code exactly, on every option of that question. When the questionnaire states a general coding convention (e.g. "1 = Yes; 0 = No", "-98 = Don't know; -99 = Refused"), apply it to options that have no code of their own. Without any codes or convention, leave this tag out; options are then numbered 1, 2, 3, …
@@ -343,7 +362,7 @@ In `notes`, list (in Albanian) anything the user should check: ambiguous questio
 
 [languages: English, Albanian]
 [group] MODULE A: GENERAL INFORMATION || MODULI A: TË DHËNA TË PËRGJITHSHME
-A1. How old are you? || Sa vjeç jeni? [numeric] [name: resp_age]
+A1. How old are you? || Sa vjeç jeni? [numeric] [name: resp_age] [check: age]
 Don't know || Nuk e di [code: -98]
 Refused || Refuzon [code: -99]
 A2. What is your employment status? || Cili është statusi juaj i punësimit? [single] [name: emp_status] [hint: Read the options || Lexo opsionet] [ask if: If A1 >= 15]
@@ -356,7 +375,7 @@ Television || Televizion [code: 1]
 Internet || Internet [code: 2]
 None || Asnjë [code: 3] [exclusive]
 Don't know || Nuk e di [code: -98]
-A4. How much did you pay last month? || Sa keni paguar muajin e kaluar? [decimal] [name: paid_amount]
+A4. How much did you pay last month? || Sa keni paguar muajin e kaluar? [decimal] [name: paid_amount] [check: money]
 Amount in euros || Shuma në euro [code: 1] [value]
 Nothing || Asgjë [code: 0]
 Don't know || Nuk e di [code: -98]
@@ -365,7 +384,7 @@ A5. How satisfied are you with public services? || Sa të kënaqur jeni me shër
 [group] MODULE B: HOUSEHOLD || MODULI B: FAMILJA
 [section] Household roster || Lista e familjes
 [READ ALOUD] First, I would like to list everyone who lives here. || [LEXO ME ZË TË LARTË] Së pari, dua të listoj të gjithë ata që jetojnë këtu. [note]
-B0. How many people live in this household? || Sa persona jetojnë në këtë familje? [numeric] [name: hh_size]
+B0. How many people live in this household? || Sa persona jetojnë në këtë familje? [numeric] [name: hh_size] [check: count]
 [repeat: B0] Household members || Anëtarët e familjes
 B1. What is the name of the member? || Si quhet anëtari? [text] [name: member_name]
 B2. Is (NAME) female or male? || A është (EMRI) femër apo mashkull? [single] [name: member_sex]
@@ -408,7 +427,7 @@ TAG_RE = re.compile(r'\[([^\]]*)\]')
 _TAG_WORDS = {"single", "multiple", "text", "string", "numeric", "decimal", "date", "time", "note", "other",
               "random", "exclusive", "value", "group", "end group", "end_group", "repeat", "end repeat",
               "end_repeat", "section", "seksion"}
-_TAG_PATTERN = re.compile(r'(hint|name|code|skip|ask if|repeat|languages?)\s*:|matrix\s+(single|multiple)\s+\d'
+_TAG_PATTERN = re.compile(r'(hint|name|code|skip|check|ask if|repeat|languages?)\s*:|matrix\s+(single|multiple)\s+\d'
                           r'|ranking\s+\d|scale\s*\d', flags=re.IGNORECASE)
 
 
@@ -557,9 +576,11 @@ COMPLETENESS_SYSTEM = INPUT_NOTE + """
 A questionnaire was converted into a line-based tagged format. Question lines start with the question ID and end with a type tag (`[single]`, `[multiple]`, `[text]`, `[numeric]`, `[decimal]`, `[date]`, `[time]`, `[scale …]`, `[matrix …]`, `[ranking N]`); option lines follow `[single]` / `[multiple]` / `[ranking]` questions. `[note]` lines hold text shown without an answer: introductions, consent text, read-aloud passages, section introductions; untagged lines right after a `[note]` line continue that note. `[group]` / `[section]` lines open a module / section, `[end group]` closes a module. Tags go at the end of the line; with a `[languages: …]` line, every text holds all languages separated by ` || `.
 
 Check the converted lines against the questionnaire, going through the questionnaire from its first section to its last:
-1. Missing questions: every question of the questionnaire must be in the lines, including the ones in the first sections that the interviewer fills in (country, questionnaire ID, interviewer ID, date and time of the interview …) and whole sections such as "Section 0". A line tagged `[other]` does not count: it is dropped from the form. For each missing question give `insert` with `before` (the index of the line it must stand right before; the number of lines for the very end) and `lines`: the question line followed by its option lines, in the same format as the other lines, keeping the questionnaire's ID. A missing section or module is inserted as one block that starts with its `[section]` / `[group]` line. List every `[other]` line you replace in `remove`.
+1. Missing questions: every question of the questionnaire must be in the lines, including the ones in the first sections that the interviewer fills in (country, questionnaire ID, interviewer ID, date and time of the interview …) and whole sections such as "Section 0". A line tagged `[other]` does not count: it is dropped from the form. For each missing question give `insert` with `before` (the index of the line it must stand right before; the number of lines for the very end) and `lines`: the question line followed by its option lines, in the same format as the other lines, keeping the questionnaire's ID. An inserted question also gets the answer rules that fit it. A missing section or module is inserted as one block that starts with its `[section]` / `[group]` line. List every `[other]` line you replace in `remove`.
 2. Notes in place: a note must stand exactly where the questionnaire prints it. An introduction comes before the questions it introduces, right after the `[group]` / `[section]` line when it opens a module or section; a note placed after the questions it introduces, in another module, or at the end is misplaced. For each misplaced note give `move` with `index` (the index of its `[note]` line; its continuation lines move with it) and `before`.
 3. Missing notes: introductions, consent text or read-aloud passages of the questionnaire that are missing. Insert each like a question, as a single `[note]` line. Do not add interviewer instructions that belong to a single question, titles, or text already present.
+
+Answer rules for inserted questions: """ + CHECK_RULES + """
 
 Indexes are the numbers before the converted lines, all referring to the lines as given. Report only real problems; when everything is present and in place, return empty lists. In `notes`, describe (in Albanian) each change in one short sentence."""
 
@@ -1308,7 +1329,7 @@ MAX_COMBINATIONS = 50000
 SEVERITY_LABELS = {"error": "Gabim", "warning": "Paralajmërim", "info": "Info"}
 
 
-AUTO_ROWS = ("start", "end", "GPS", "Anketuesi_ja", "emri_mbiemri", "numri_telefonit")
+AUTO_ROWS = ("start", "end", "GPS", "Anketuesi_ja", "emri_mbiemri", "numri_telefonit_type", "numri_telefonit")
 NON_QUESTION_TYPES = ("begin_group", "begin_repeat", "begin", "note", "calculate", "start", "end")
 
 

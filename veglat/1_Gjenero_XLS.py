@@ -209,7 +209,82 @@ FIXED_TEXTS = {
     "exclusive": {"sq": "Ky opsion nuk mund të zgjidhet bashkë me opsione të tjera.",
                   "en": "This option cannot be selected together with other options.",
                   "sr": "Ova opcija se ne može izabrati zajedno sa drugim opcijama."},
+    "refused": {"sq": "Refuzon", "en": "Refused", "sr": "Odbija"},
+    "check_age": {"sq": "Mosha duhet të jetë nga 18 deri në 120 vjeç.",
+                  "en": "Age must be between 18 and 120.",
+                  "sr": "Starost mora biti između 18 i 120 godina."},
+    "check_age_other": {"sq": "Mosha duhet të jetë nga 0 deri në 120 vjeç.",
+                        "en": "Age must be between 0 and 120.",
+                        "sr": "Starost mora biti između 0 i 120 godina."},
+    "check_count": {"sq": "Numri nuk mund të jetë negativ.",
+                    "en": "The number cannot be negative.",
+                    "sr": "Broj ne može biti negativan."},
+    "check_money": {"sq": "Shuma nuk mund të jetë negative.",
+                    "en": "The amount cannot be negative.",
+                    "sr": "Iznos ne može biti negativan."},
+    "check_name": {"sq": "Shkruaj emrin dhe mbiemrin e saktë, vetëm me shkronja.",
+                   "en": "Write the correct name and surname, using letters only.",
+                   "sr": "Upišite tačno ime i prezime, samo slovima."},
+    "check_email": {"sq": "Adresa e email-it nuk është e vlefshme, p.sh. emri@shembull.com.",
+                    "en": "This email address is not valid, e.g. name@example.com.",
+                    "sr": "Adresa e-pošte nije ispravna, npr. ime@primer.com."},
+    "check_range": {"sq": "Vlera duhet të jetë nga {low} deri në {high}.",
+                    "en": "The value must be between {low} and {high}.",
+                    "sr": "Vrednost mora biti između {low} i {high}."},
+    "check_max": {"sq": "Vlera nuk mund të jetë më e madhe se përgjigjja te pyetja {ref}.",
+                  "en": "The value cannot be greater than the answer to question {ref}.",
+                  "sr": "Vrednost ne može biti veća od odgovora na pitanje {ref}."},
+    "check_sum100": {"sq": "Përqindjet bashkë me pyetjet {ref} duhet të mblidhen në 100.",
+                     "en": "The percentages, together with questions {ref}, must add up to 100.",
+                     "sr": "Procenti, zajedno sa pitanjima {ref}, moraju u zbiru dati 100."},
+    "check_age_birth": {"sq": "Kjo përgjigje nuk përputhet me pyetjen {ref} (mosha dhe viti i lindjes).",
+                        "en": "This answer does not match question {ref} (age and year of birth).",
+                        "sr": "Ovaj odgovor se ne slaže sa pitanjem {ref} (starost i godina rođenja)."},
+    "check_percent": {"sq": "Përqindja duhet të jetë nga 0 deri në 100.",
+                      "en": "The percentage must be between 0 and 100.",
+                      "sr": "Procenat mora biti između 0 i 100."},
+    "check_phone": {"sq": "Numri nuk është i vlefshëm. Shkruaje pa hapësira, p.sh. 044123456 ose +38344123456; "
+                          "numrat e huaj me + ose 00 përpara.",
+                    "en": "This number is not valid. Write it without spaces, e.g. 044123456 or +38344123456; "
+                          "foreign numbers start with + or 00.",
+                    "sr": "Broj nije ispravan. Upišite ga bez razmaka, npr. 044123456 ili +38344123456; "
+                          "strani brojevi počinju sa + ili 00."},
 }
+# Kosovo mobile (043-049) and landline (028, 029, 038, 039) numbers, or a foreign number in international format
+PHONE_PATTERN = r"^((\+383|00383|0)(4[3-9]|2[89]|3[89])[0-9]{6}|(\+|00)(?!383)[1-9][0-9]{7,13})$"
+PHONE_CONSTRAINT = rf"regex(., '{PHONE_PATTERN}') and not(regex(., '([0-9])\1{{5}}'))"   # no 044111111
+# Written out because Enketo's regex engine has no \p{L}: Latin with accents (ë, ç, š, đ …) and Cyrillic
+NAME_LETTER = "A-Za-zÀ-ÖØ-öø-ÿĀ-žЀ-ӿ"
+NAME_WORD = rf"([{NAME_LETTER}]{{2,}}|[{NAME_LETTER}][-'’][{NAME_LETTER}]+)([-'’][{NAME_LETTER}]+)*"   # also O'Brien
+# Double-quoted because a name can hold an apostrophe; spaces at the ends come from phone keyboards
+NAME_VOWELS = ("aeiouyàáâãäåæèéêëìíîïòóôõöøùúûüýÿāăąēĕėęěīĭįıōŏőœūŭůűųŷаеиоуыэюяєіїёѐѝ"
+               "AEIOUYÀÁÂÃÄÅÆÈÉÊËÌÍÎÏÒÓÔÕÖØÙÚÛÜÝŸĀĂĄĒĔĖĘĚĪĬĮİŌŎŐŒŪŬŮŰŲŶАЕИОУЫЭЮЯЄІЇЁЀЍ")
+# Against invented names: no letter three times in a row (aaa, Aaa; a word like Bbb has no vowel), every word has a vowel
+NAME_CONSTRAINT = (f'regex(., "^ *{NAME_WORD}( +{NAME_WORD})+ *$")'
+                   rf' and not(regex(., "([{NAME_LETTER}])\1\1|Aaa|Eee|Iii|Ooo|Uuu|Yyy|Ëëë"))'
+                   f' and not(regex(., "(^| )[^ {NAME_VOWELS}]+( |$)"))')
+EMAIL_CONSTRAINT = r"regex(., '^ *[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,} *$')"
+NUMBER_TYPES = ("numeric", "decimal")
+TEXT_TYPES = ("text", "string")
+# [check: ...] tags without a parameter: the answer rule, the question types it applies to and, optionally,
+# the wording that suggests the tag is missing
+ANSWER_CHECKS = {
+    "age": {"constraint": ". >= 18 and . <= 120", "types": NUMBER_TYPES,
+            "looks_like": r"sa vje[cç] jeni|mosha juaj|moshën tuaj|how old are you|your age|koliko (imate )?godina"},
+    "age_other": {"constraint": ". >= 0 and . <= 120", "types": NUMBER_TYPES},
+    "percent": {"constraint": ". >= 0 and . <= 100", "types": NUMBER_TYPES,
+                "looks_like": r"%|p[eë]rqind|percent|procen"},
+    "count": {"constraint": ". >= 0", "types": NUMBER_TYPES},
+    "money": {"constraint": ". >= 0", "types": NUMBER_TYPES},
+    "phone": {"constraint": PHONE_CONSTRAINT, "types": TEXT_TYPES + ("numeric",),
+              "looks_like": r"(num[eë]?r\w*|nr\.?)\s+((i|e|t[eë])\s+)?tel|phone number|mobile number|broj\w* telefona"},
+    "name": {"constraint": NAME_CONSTRAINT, "types": TEXT_TYPES,
+             "looks_like": r"em[eë]r\w*\s+(dhe|e)\s+mbiem[eë]r|full name|name and surname|ime i prezime"},
+    "email": {"constraint": EMAIL_CONSTRAINT, "types": TEXT_TYPES,
+              "looks_like": r"e-?mail|postës elektronike|e-pošt"},
+}
+# Contact details a respondent may decline to give: these questions also get a "Refused" answer
+REFUSABLE_CHECKS = ("phone", "email")
 RANKING_LABELS_EN = [
     "First choice", "Second choice", "Third choice", "Fourth choice", "Fifth choice", "Sixth choice",
     "Seventh choice", "Eighth choice", "Ninth choice", "Tenth choice", "Eleventh choice", "Twelfth choice",
@@ -510,6 +585,87 @@ def generate_xlsform(input_docx, output_xlsx, coding_mode, data_method=True, sel
     def fixed(key):
         return [FIXED_TEXTS[key].get(code, FIXED_TEXTS[key]["sq"]) for code in lang_codes]
 
+    def simple_check(kind):
+        """A parameterless rule as (kind, constraint, message per language)."""
+        return kind, ANSWER_CHECKS[kind]["constraint"], fixed(f"check_{kind}")
+
+    def build_check(tag, q_type, qname):
+        """The rule of one [check: ...] tag, or None when it cannot be applied to this question."""
+        kind, _, arg = tag.partition(" ")
+        kind, arg = kind.lower(), arg.strip()
+        if kind in ANSWER_CHECKS:
+            return simple_check(kind) if q_type in ANSWER_CHECKS[kind]["types"] else None
+        is_number = q_type in NUMBER_TYPES
+        if kind == "range":
+            m = re.fullmatch(r'(\d+(?:\.\d+)?)\s*-\s*(\d+(?:\.\d+)?)', arg)
+            if not (is_number and m and float(m.group(1)) <= float(m.group(2))):
+                return None
+            low, high = m.groups()
+            return kind, f". >= {low} and . <= {high}", [t.format(low=low, high=high) for t in fixed("check_range")]
+        if kind not in ("max", "sum100", "age_birth"):
+            return None
+
+        # Rules that compare with earlier questions. A question that was not answered (hidden by a filter,
+        # or "Don't know" / "Refused") cannot be compared, so the rule then lets the answer through.
+        refs = [r.rstrip(".") for r in re.split(r'[,\s]+', arg) if r]
+        others = [qname_by_ref.get(r) for r in refs]
+        if not refs or None in others or qname in others:
+            return None
+        unanswered = " or ".join(f"${{{o}}} = ''" for o in others)
+        messages = [t.format(ref=", ".join(refs)) for t in fixed(f"check_{kind}")]
+        if kind == "max" and is_number and len(others) == 1:
+            return kind, f"{unanswered} or . <= ${{{others[0]}}}", messages
+        if kind == "sum100" and is_number:
+            total = " + ".join(f"${{{o}}}" for o in others) + " + ."
+            return kind, f"{unanswered} or round(({total}) * 100) = 10000", messages   # 33.3 + 33.3 + 33.4
+        if kind == "age_birth" and (is_number or q_type == "date") and len(others) == 1:
+            def year(field, is_date):
+                return f"int(format-date({field}, '%Y'))" if is_date else field
+            other = "${" + others[0] + "}"
+            # Age = this year - year of birth, or one less before the birthday
+            diff = (f"int(format-date(today(), '%Y')) - {year('.', q_type == 'date')} - "
+                    f"{year(other, others[0] in date_rows)}")
+            return kind, f"{unanswered} or ({diff} >= 0 and {diff} <= 1)", messages
+        return None
+
+    def resolve_checks(line, q_type, qname, label_text):
+        """The rules of the question's [check: ...] tags; warns about an unusable or a likely missing tag."""
+        tags = re.findall(r'\[\s*check\s*:\s*([^\]]+?)\s*\]', line, flags=re.IGNORECASE)
+        rules = []
+        for tag in tags:
+            rule = build_check(tag, q_type, qname)
+            if rule:
+                rules.append(rule)
+            elif warnings is not None:
+                warnings.append(f"Tag-u [check: {tag}] te pyetja {qname} nuk u zbatua: nuk njihet, nuk vlen për "
+                                f"llojin [{q_type}], ose i referohet një pyetjeje që nuk është më përpara në formular.")
+        if not tags and warnings is not None:
+            for name, spec in ANSWER_CHECKS.items():
+                if q_type in spec["types"] and "looks_like" in spec and re.search(spec["looks_like"], label_text.lower()):
+                    warnings.append(f"Pyetja {qname} ({label_text[:60]}) duket se duhet ta ketë tag-un "
+                                    f"[check: {name}], por nuk e ka. Shtoje te pyetësori i formatuar nëse vlen.")
+                    break
+        return rules
+
+    def with_checks(fields, rules):
+        """Adds the answer rules to a question row; several rules must all hold."""
+        if rules:
+            fields["constraint"] = rules[0][1] if len(rules) == 1 else " and ".join(f"({r[1]})" for r in rules)
+            fields["constraint_message"] = [" ".join(texts) for texts in zip(*(r[2] for r in rules))]
+        if any(r[0] == "phone" for r in rules):
+            fields["appearance"] = "numbers"   # a phone number is text, shown with the number keyboard
+        return fields
+
+    def add_contact_question(name, label_key, check):
+        """The form's closing contact fields: the value with its rule, or "Refused"."""
+        list_name = f"{name}_type_list"
+        survey.append({"type": f"select_one {list_name}", "name": f"{name}_type", "label": fixed(label_key),
+                       "required": "true"})
+        choices.append({"list_name": list_name, "name": "1", "label": fixed("enter_value")})
+        choices.append({"list_name": list_name, "name": "-99", "label": fixed("refused")})
+        survey.append(with_checks({"type": "text", "name": name, "label": fixed(label_key), "required": "true",
+                                   "relevant": f"${{{name}_type}} = '1'"}, [simple_check(check)]))
+
     def clean_segment(text, qnum):
         """Question text of a non-first language: same cleaning as extract_question_number_and_text."""
         if qnum:
@@ -567,6 +723,7 @@ def generate_xlsform(input_docx, output_xlsx, coding_mode, data_method=True, sel
     structure_index = 0
     qname_by_ref = {}      # question number / variable name → form name, for [repeat: ROST0]
     used_qnames = set()
+    date_rows = set()      # form names of [date] questions, for [check: age_birth ...]
 
     used_codes = {}   # list_name -> choice names already used
 
@@ -709,6 +866,10 @@ def generate_xlsform(input_docx, output_xlsx, coding_mode, data_method=True, sel
                 qname_by_ref[var_name] = qname
 
             first_row_index = len(survey)   # the question's first form row gets its routing
+            if q_type == "date":
+                date_rows.add(qname)
+            checks = resolve_checks(line, q_type, qname, label_text)
+            check_kinds = [c[0] for c in checks]
 
             def add_common_question(fields):
                 if parameters:
@@ -803,20 +964,24 @@ def generate_xlsform(input_docx, output_xlsx, coding_mode, data_method=True, sel
                     question["constraint_message"] = fixed("exclusive")
 
             elif q_type in VALUE_TYPES:
+                value_type = "text" if "phone" in check_kinds else VALUE_TYPES[q_type]   # keeps a phone's leading 0 and +
                 i += 1
                 special = []
                 while i < len(lines) and not line_type(lines[i]) \
                         and (option_tag(lines[i], "code") is not None or has_flag(lines[i], "value")):
                     special.append(lines[i])
                     i += 1
+                # A contact detail can always be refused; special answers from the questionnaire stay as written
+                if not special and any(k in REFUSABLE_CHECKS for k in check_kinds):
+                    special = [f" {LANG_SEP} ".join(fixed("refused")) + " [code: -99]"]
 
                 if not special:
-                    add_common_question({
-                        "type": VALUE_TYPES[q_type],
+                    add_common_question(with_checks({
+                        "type": value_type,
                         "name": qname,
                         "label": label,
                         "required": required
-                    })
+                    }, checks))
                 else:
                     # Value + special codes: a select_one "<name>_type" (value / Don't know / Refused …)
                     # and the value field itself, shown when the value option is chosen
@@ -845,13 +1010,13 @@ def generate_xlsform(input_docx, output_xlsx, coding_mode, data_method=True, sel
                         if option_tag(opt, "skip"):
                             route["skips"].append({"source": f"{qname}_type", "code": code, "target": option_tag(opt, "skip")})
                         choices.append({"list_name": list_name, "name": code, "label": option_labels(opt)})
-                    survey.append({
-                        "type": VALUE_TYPES[q_type],
+                    survey.append(with_checks({
+                        "type": value_type,
                         "name": qname,
                         "label": value_label,
                         "required": required,
                         "relevant": f"${{{qname}_type}} = '{value_code}'"
-                    })
+                    }, checks))
 
             elif q_type in ["text", "string"]:
                 add_common_question({
@@ -996,8 +1161,9 @@ def generate_xlsform(input_docx, output_xlsx, coding_mode, data_method=True, sel
     while structure_stack:
         close_block()
 
-    survey.append({"type": "text", "name": "emri_mbiemri", "label": fixed("full_name"), "required": "true"})
-    survey.append({"type": "text", "name": "numri_telefonit", "label": fixed("phone"), "required": "true"})
+    survey.append(with_checks({"type": "text", "name": "emri_mbiemri", "label": fixed("full_name"), "required": "true"},
+                              [simple_check("name")]))
+    add_contact_question("numri_telefonit", "phone", "phone")
 
     def localize(rows):
         """Writes per-language texts as label / label::<language> columns, keeping the column order."""
