@@ -123,7 +123,7 @@ def _vars(name):
 
 
 def base_css():
-    """Për çdo faqe: ngjyrat e të dy temave, butoni "Theme" dhe dritarja "Ju lutemi prisni pak"."""
+    """Për çdo faqe: ngjyrat e të dy temave, butoni "Theme" dhe shiriti "Ju lutemi prisni pak"."""
     guess = "dark" if is_dark() else "light"
     return ("<style>:root {" + _vars(guess) + "}"
             + 'html[data-ubo-theme="light"] {' + _vars("light") + "}"
@@ -173,29 +173,33 @@ html[data-ubo-theme="dark"] [class*="st-key-ubo_card"]::before { opacity: .55; }
 /* menyja e Streamlit-it nuk duket për çastin kur butoni "Theme" e përdor për të ndërruar temën */
 html.ubo-switching [data-testid="stMainMenuPopover"] { opacity: 0 !important; }
 
-/* ---------- Dritarja "Ju lutemi prisni pak" ---------- */
+/* ---------- Shiriti "Ju lutemi prisni pak", poshtë në faqe: faqja mbetet e lexueshme ---------- */
 #ubo-wait {
-    position: fixed; inset: 0; z-index: 999990; display: none; align-items: center; justify-content: center;
-    background: color-mix(in srgb, var(--ubo-bg) 55%, transparent); backdrop-filter: blur(2px);
+    position: fixed; left: 50%; bottom: 16px; transform: translateX(-50%); z-index: 999990; display: none;
+    width: min(720px, calc(100vw - 32px));
 }
-#ubo-wait.show { display: flex; animation: ubo-fade .2s ease; }
+#ubo-wait.show { display: block; animation: ubo-fade .2s ease; }
 @keyframes ubo-fade { from { opacity: 0; } to { opacity: 1; } }
 #ubo-wait .box {
-    width: min(390px, calc(100vw - 40px)); padding: 28px 26px 22px; text-align: center;
-    background: var(--ubo-surface); border: 1px solid var(--ubo-line); border-radius: 20px;
+    display: flex; align-items: center; gap: 14px; padding: 12px 14px 12px 16px;
+    background: var(--ubo-surface); border: 1px solid var(--ubo-line); border-radius: 14px;
     box-shadow: var(--ubo-shadow-hover); color: var(--ubo-ink); font-family: Inter, system-ui, sans-serif;
 }
+#ubo-wait .txt { flex: 1; min-width: 0; text-align: left; }
+/* the end of the page can scroll out from under the bar */
+html.ubo-waiting [data-testid="stMainBlockContainer"] { padding-bottom: 140px !important; }
 #ubo-wait .ring {
-    width: 46px; height: 46px; margin: 0 auto 16px; border-radius: 50%;
+    flex-shrink: 0; width: 28px; height: 28px; border-radius: 50%;
     background: conic-gradient(#22C6A0, #3E7FF5, #F4C81E, #EC1E8C, #22C6A0);
     -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 5px), #000 calc(100% - 4px));
     mask: radial-gradient(farthest-side, transparent calc(100% - 5px), #000 calc(100% - 4px));
     animation: ubo-spin 1s linear infinite;
 }
 @keyframes ubo-spin { to { transform: rotate(360deg); } }
-#ubo-wait .t { font: 700 19px "Space Grotesk", system-ui, sans-serif; letter-spacing: -.01em; }
-#ubo-wait .s { color: var(--ubo-muted); font-size: 14px; margin: 6px 0 18px; line-height: 1.55; }
+#ubo-wait .t { font: 700 15px "Space Grotesk", system-ui, sans-serif; letter-spacing: -.01em; }
+#ubo-wait .s { color: var(--ubo-muted); font-size: 13px; margin-top: 2px; line-height: 1.4; }
 #ubo-wait button {
+    flex-shrink: 0; white-space: nowrap;
     border: 1px solid var(--ubo-line-2); background: var(--ubo-surface); color: #D63A3A; border-radius: 10px;
     padding: 9px 16px; font: 600 14px Inter, system-ui, sans-serif; cursor: pointer;
 }
@@ -217,7 +221,7 @@ def page_script():
     - html[data-ubo-theme]: tema që Streamlit po shfaq (sipas ngjyrës së tekstit), për ngjyrat tona;
     - butoni "Theme" me listën Light / Dark: e ndërron temën përmes menysë së Streamlit-it, pa rifreskim,
       që dokumentet e ngarkuara të mos humbasin (nëse menyja nuk gjendet: localStorage + rifreskim);
-    - dritarja "Ju lutemi prisni pak" kur faqja punon më shumë se 1.2 s, me butonin "Anulo kërkesën",
+    - shiriti "Ju lutemi prisni pak" poshtë kur faqja punon më shumë se 1.2 s, me butonin "Anulo kërkesën",
       që klikon butonin Stop të Streamlit-it."""
     paths = ["/"] + ["/" + quote(t.url_path) for t in TOOLS]
     return """<script>
@@ -325,8 +329,8 @@ def page_script():
     if (box) return box;
     box = D.createElement("div");
     box.id = "ubo-wait";
-    box.innerHTML = '<div class="box"><div class="ring"></div><div class="t">Ju lutemi prisni pak</div>'
-      + '<div class="s">Po punojmë me kërkesën tuaj.<br>Për dokumente më të mëdha, kjo zgjat pak më shumë.</div>'
+    box.innerHTML = '<div class="box"><div class="ring"></div><div class="txt"><div class="t">Ju lutemi prisni pak</div>'
+      + '<div class="s">Po punojmë me kërkesën tuaj. Për dokumente më të mëdha, kjo zgjat pak më shumë.</div></div>'
       + '<button type="button">Anulo kërkesën</button></div>';
     box.querySelector("button").onclick = function () {
       const stop = Array.from(D.querySelectorAll('[data-testid="stStatusWidget"] button'))
@@ -362,6 +366,7 @@ def page_script():
       box.classList.remove("show");
       if (P.__uboCancelled) { P.__uboCancelled = false; showToast("Kërkesa u anulua. Mund ta nisni përsëri kur të doni."); }
     }
+    D.documentElement.classList.toggle("ubo-waiting", box.classList.contains("show"));
     // a stopped page keeps its last spinner ("Claude po lexon…") on screen; hide it while nothing runs
     D.documentElement.classList.toggle("ubo-idle", !running);
   }
@@ -379,6 +384,31 @@ def page_script():
   tick();
 })();
 </script>""" % json.dumps(paths)
+
+
+STEP_LABELS = {
+    "convert_questionnaire": "Formatimi i pyetësorit",
+    "review_completeness": "Kontrolli i dytë i pyetjeve",
+    "apply_languages": "Gjuhët / përkthimi",
+    "repair_translations": "Plotësimi i përkthimeve",
+    "generate_filters": "Filtrat",
+    "review_filters": "Kontrolli i filtrave",
+}
+
+
+def reset_timings():
+    import streamlit as st
+    st.session_state["ubo_timings"] = []
+
+
+def show_timings():
+    """One line with the time of each AI step of the last run, e.g. Formatimi 48 s · Filtrat 62 s."""
+    import streamlit as st
+    timings = st.session_state.get("ubo_timings")
+    if timings:
+        total = sum(s for _, s in timings)
+        st.caption("Koha e hapave: " + " · ".join(f"{label} {s:.0f} s" for label, s in timings)
+                   + f" — gjithsej {total:.0f} s")
 
 
 def interruptible(fn, *args, **kwargs):
@@ -402,6 +432,7 @@ def interruptible(fn, *args, **kwargs):
             result["error"] = e
 
     worker = threading.Thread(target=work, daemon=True)
+    started = time.monotonic()
     worker.start()
     heartbeat = st.empty()
     try:
@@ -411,6 +442,12 @@ def interruptible(fn, *args, **kwargs):
     finally:
         if worker.is_alive():
             stop.set()
+        # How long each AI step took, shown on the page (see show_timings) and in the server log
+        name = fn.__name__
+        label = "Rregullimi i filtrave" if kwargs.get("failed_tests") else STEP_LABELS.get(name, name)
+        seconds = time.monotonic() - started
+        st.session_state.setdefault("ubo_timings", []).append((label, seconds))
+        print(f"[koha] {label}: {seconds:.1f} s", flush=True)
     if "error" in result:
         raise result["error"]
     return result["value"]

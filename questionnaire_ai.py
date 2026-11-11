@@ -16,6 +16,7 @@ import json
 import math
 import os
 import re
+import time
 from io import BytesIO
 
 import anthropic
@@ -26,14 +27,19 @@ from docx2python import docx2python
 
 MODEL = "claude-opus-5"          # the page can override it with CLAUDE_MODEL in secrets (e.g. claude-sonnet-5)
 FALLBACK_BETA = "server-side-fallback-2026-07-01"
-FALLBACK_MODELS = ("claude-opus-5",)
+# The second check of the formatting (is every question there, are the notes in place) compares two lists,
+# which the faster and cheaper Sonnet does well; formatting and filters stay on MODEL
+REVIEW_MODEL = "claude-sonnet-5-5"
+FALLBACK_MODELS = ("claude-opus-5", "claude-sonnet-5-5")
 # USD per 1M tokens (input, output), used only for the cost estimate shown in the UI
-PRICING = {"claude-opus-5": (5.00, 25.00), "claude-sonnet-5": (2.00, 10.00)}
+PRICING = {"claude-opus-5": (5.00, 25.00), "claude-sonnet-5": (2.00, 10.00), "claude-sonnet-5-5": (2.00, 10.00)}
 # Thinking depth per step. Formatting is mostly careful transcription and most of its cost is output
 # (thinking is billed as output), so it runs at "medium"; filters need reasoning over the routing, so
-# they keep the default "high". Raise CONVERT_EFFORT to "high" if question types or codes come out wrong.
+# they ran at "high", now "medium" because "high" made them the slowest step. Raise either one to "high"
+# if question types, codes or filters come out wrong.
 CONVERT_EFFORT = "medium"
-FILTER_EFFORT = "high"
+FILTER_EFFORT = "medium"
+REVIEW_EFFORT = "medium"
 
 SOURCE_TYPES = ["docx", "xlsx", "pdf", "txt", "csv", "md"]
 
@@ -65,8 +71,8 @@ def make_client(api_key):
     return anthropic.Anthropic(api_key=api_key)
 
 
-def estimate_cost(usage):
-    price_in, price_out = PRICING.get(MODEL, PRICING["claude-opus-5"])
+def estimate_cost(usage, model=None):
+    price_in, price_out = PRICING.get(model or MODEL, PRICING["claude-opus-5"])
     # cache writes (5-minute TTL) cost 1.25x the input price, cache reads 0.1x
     input_cost = (usage.input_tokens or 0) * price_in \
         + (usage.cache_creation_input_tokens or 0) * price_in * 1.25 \
@@ -74,22 +80,31 @@ def estimate_cost(usage):
     return (input_cost + (usage.output_tokens or 0) * price_out) / 1_000_000
 
 
-def _call_claude(client, system, content, schema, max_tokens=64000, effort=FILTER_EFFORT):
-    """Streams one request with a JSON-schema output and returns (data, usage)."""
+def _call_claude(client, system, content, schema, max_tokens=64000, effort=FILTER_EFFORT, model=None):
+    """Streams one request with a JSON-schema output and returns (data, usage). model: MODEL when not given."""
+    model = model or MODEL
     params = dict(
-        model=MODEL,
+        model=model,
         max_tokens=max_tokens,
         system=system,
         messages=[{"role": "user", "content": content}],
         output_config={"effort": effort, "format": {"type": "json_schema", "schema": schema}},
     )
-    if MODEL in FALLBACK_MODELS:
+    if model in FALLBACK_MODELS:
         params.update(betas=[FALLBACK_BETA], fallbacks="default")
+    started, first_event = time.monotonic(), None
     try:
         with client.beta.messages.stream(**params) as stream:
             for _ in stream:            # read event by event, so a stop is noticed while Claude is writing
+                first_event = first_event or time.monotonic()
                 check_cancelled()
             message = stream.get_final_message()
+        # Server log: waiting for the first answer vs. writing it, and how much was written (thinking included)
+        u = message.usage
+        print(f"[claude] {message.model} effort={effort}: {time.monotonic() - started:.1f} s "
+              f"(përgjigjja e parë pas {(first_event or started) - started:.1f} s), "
+              f"input {u.input_tokens} + cache {u.cache_read_input_tokens or 0}/{u.cache_creation_input_tokens or 0}, "
+              f"output {u.output_tokens} tokens", flush=True)
     except anthropic.AuthenticationError:
         raise AIError("Çelësi API i Claude (ANTHROPIC_API_KEY) nuk është i vlefshëm.")
     except anthropic.RateLimitError:
@@ -683,8 +698,8 @@ def review_completeness(client, source_blocks, lines, rounds=2):
             f"<converted_lines>\n{numbered}\n</converted_lines>\n\n"
             "Check that every question of the questionnaire is present and that the notes are in place."}]
         data, usage = _call_claude(client, COMPLETENESS_SYSTEM, content, COMPLETENESS_SCHEMA,
-                                   max_tokens=64000, effort=CONVERT_EFFORT)
-        cost += estimate_cost(usage)
+                                   max_tokens=64000, effort=REVIEW_EFFORT, model=REVIEW_MODEL)
+        cost += estimate_cost(usage, REVIEW_MODEL)
         lines, changes = _apply_review(lines, data.get("move", []), data.get("insert", []), data.get("remove", []))
         if not changes:
             break

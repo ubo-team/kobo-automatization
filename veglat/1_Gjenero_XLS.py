@@ -292,6 +292,9 @@ RANKING_LABELS_EN = [
     "Eighteenth choice", "Nineteenth choice", "Twentieth choice", "Extra"
 ]
 EXCLUSIVE_CODES = ("-97", "-98", "-99")
+# Up to this many questions the second check of the formatting is skipped: a short questionnaire is easy to
+# check by eye, and the check is a whole extra AI call
+SHORT_QUESTIONNAIRE = 25
 CODING_ORIGINAL = "Ruaj numërimin origjinal si në pyetësor (A1, B2a, 5.1, …)"
 CODING_VARIABLES = "Emrat e variablave nga pyetësori (p.sh. hh_study_child_confirm)"
 
@@ -1549,14 +1552,32 @@ if uploaded_file:
         lines, lang_notes, _ = st.session_state["gen_lang_result"]
         show_notes("Shënime për gjuhët:", lang_notes)
 
+    # The settings come before the formatting: "Gjenero formularin XLS me AI" builds the form right away with them
+    with ubo_ui.card("Cilësimet e formularit", step=5):
+        data_collection_method = st.selectbox(
+            "Metoda e mbledhjes së të dhënave:",
+            ["Ballë për ballë", "Telefon/Online"], key="form_method"
+        )
+        has_variable_names = bool(lines) and any(option_tag(line, "name") for line in lines)
+        coding_mode = st.radio(
+            "Si të kodohen pyetjet që kanë numërim në Word?",
+            options=[
+                "P1, P2, P3, ...",
+                "Q1, Q2, Q3, ...",
+                CODING_ORIGINAL,
+                CODING_VARIABLES
+            ], index=3 if has_variable_names else 2, key="form_coding")
+    step = 6
+
     if lines is None:
-        with ubo_ui.card("Formatimi me AI", step=5):
+        with ubo_ui.card("Formatimi me AI", step=step):
             if doc_lines and has_tags(doc_lines):
                 st.info(f"Ky dokument duket se ka tag-e. Nëse është i formatuar tashmë, zgjidh më lart "
                         f"**'{SOURCE_TAGGED}'** për ta koduar drejtpërdrejt, pa kosto AI.")
             st.info("AI do ta formatojë pyetësorin (llojet e pyetjeve, opsionet, seksionet) "
                     "dhe do ta gjenerojë direkt formularin XLS.")
             if st.button("Gjenero formularin XLS me AI", type="primary"):
+                ubo_ui.reset_timings()
                 client = get_claude_client()
                 if client is None:
                     st.error("Mungon çelësi `ANTHROPIC_API_KEY` në secrets të aplikacionit.")
@@ -1569,13 +1590,20 @@ if uploaded_file:
                         st.stop()
                 format_cost = qai.estimate_cost(usage)
                 # Second check against the questionnaire: every question present, notes / introductions in place
-                with st.spinner("Claude po kontrollon për së dyti që të gjitha pyetjet dhe shënimet janë në vendin e tyre..."):
-                    try:
-                        ai_lines, review_changes, review_cost = ubo_ui.interruptible(qai.review_completeness, client, source_blocks, ai_lines)
-                        ai_notes = ai_notes + review_changes
-                        format_cost += review_cost
-                    except qai.AIError as e:
-                        st.warning(f"Kontrolli i dytë i pyetjeve dhe shënimeve nuk u krye: {e}")
+                n_questions = sum(1 for l in ai_lines if (line_type(l) or "note") not in ("note", "other", "section")
+                                  + STRUCTURE_TYPES)
+                if n_questions <= SHORT_QUESTIONNAIRE:
+                    ai_notes = ai_notes + [f"Kontrolli i dytë (a janë të gjitha pyetjet dhe shënimet në vend) u "
+                                           f"anashkalua sepse pyetësori është i shkurtër ({n_questions} pyetje). "
+                                           f"Krahasoje me sy me pyetësorin."]
+                else:
+                    with st.spinner("Claude po kontrollon për së dyti që të gjitha pyetjet dhe shënimet janë në vendin e tyre..."):
+                        try:
+                            ai_lines, review_changes, review_cost = ubo_ui.interruptible(qai.review_completeness, client, source_blocks, ai_lines)
+                            ai_notes = ai_notes + review_changes
+                            format_cost += review_cost
+                        except qai.AIError as e:
+                            st.warning(f"Kontrolli i dytë i pyetjeve dhe shënimeve nuk u krye: {e}")
                 # Languages: kept in the chosen order, or translated / merged by Gemini
                 with st.spinner("Gemini po përkthen pyetësorin..." if translation_mode in (TR_AI, TR_SEPARATE)
                                 else "Po përgatiten gjuhët..."):
@@ -1615,24 +1643,10 @@ if uploaded_file:
                                            label_visibility="collapsed")
             lines = [line.strip() for line in tagged_text.split('\n') if line.strip()]
             show_notes("Shënime nga AI:", st.session_state.get("gen_notes"))
+        step += 1
 
-    settings_step = 5 if questionnaire_kind == SOURCE_TAGGED else 6
-    with ubo_ui.card("Cilësimet e formularit", step=settings_step):
-        data_collection_method = st.selectbox(
-        "Metoda e mbledhjes së të dhënave:",
-        ["Ballë për ballë", "Telefon/Online"]
-        )
-
-        has_variable_names = any(option_tag(line, "name") for line in lines)
-        coding_mode = st.radio(
-        "Si të kodohen pyetjet që kanë numërim në Word?",
-        options=[
-            "P1, P2, P3, ...",
-            "Q1, Q2, Q3, ...",
-            CODING_ORIGINAL,
-            CODING_VARIABLES
-        ], index=3 if has_variable_names else 2)
-
+    # Needs the questions, so it can only come after the formatting
+    with ubo_ui.card("Pyetjet e formularit", step=step):
         # Extract question numbers (e.g., 1, D1, 2a, Q1.2 etc.)
         question_options = []
         unnumbered_questions = []
@@ -1698,11 +1712,18 @@ if uploaded_file:
         st.session_state["selected_questions"] = selected_questions
 
 
-    with ubo_ui.card("Gjenerimi i formularit", step=settings_step + 1):
+    # What the form is built from: when it changes after the form was made, the form is out of date
+    form_inputs = (data_collection_method, coding_mode, tuple(selected_questions or ()), "\n".join(lines))
+    with ubo_ui.card("Gjenerimi i formularit", step=step + 1):
         if data_collection_method:
+            if st.session_state.get("gen_xlsx_data") and st.session_state.get("gen_form_inputs") != form_inputs:
+                st.warning("Cilësimet, pyetjet e përjashtuara ose pyetësori i formatuar ndryshuan pasi u krijua "
+                           "formulari. Klikoni **'Gjenero formularin XLS'** që formulari t'i marrë parasysh.")
             generate_button = st.button("Gjenero formularin XLS", type="primary", disabled=block_generation)
             autogenerate = st.session_state.pop("gen_autogenerate", False) and not block_generation
             if generate_button or autogenerate:
+                if not autogenerate:
+                    ubo_ui.reset_timings()   # after "… me AI" the formatting times stay, the filters are added
                 generated_name = f"{base_name}_gjeneruar.xlsx"
                 temp_xlsx_path = os.path.join(tempfile.gettempdir(), generated_name)
                 error = None
@@ -1728,6 +1749,7 @@ if uploaded_file:
                     st.session_state["gen_skipped_other_questions"] = skipped
                     st.session_state["gen_warnings"] = generation_warnings
                     st.session_state["gen_filter_result"] = filter_result
+                    st.session_state["gen_form_inputs"] = form_inputs
                     st.session_state["gen_show_ready"] = True   # the "form is ready" popup, once
 
             if st.session_state.get("gen_xlsx_data"):
@@ -1748,10 +1770,11 @@ if uploaded_file:
         total_cost += st.session_state["gen_filter_result"]["cost"]
     if total_cost:
         st.caption(f"Kosto e përafërt e AI: ${total_cost:.2f}")
+    ubo_ui.show_timings()
 
     # The finished form: at the end of the page, and once as a popup right after it is generated
     if st.session_state.get("gen_xlsx_data"):
-        with ubo_ui.card("Formulari është gati", step=settings_step + 2):
+        with ubo_ui.card("Formulari është gati", step=step + 2):
             show_form_ready("page")
         if st.session_state.pop("gen_show_ready", False):
             ready_dialog()
