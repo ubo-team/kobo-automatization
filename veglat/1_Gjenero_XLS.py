@@ -292,6 +292,9 @@ RANKING_LABELS_EN = [
     "Eighteenth choice", "Nineteenth choice", "Twentieth choice", "Extra"
 ]
 EXCLUSIVE_CODES = ("-97", "-98", "-99")
+# The fields the program adds at the end of every form, as they appear in the list of questions not to code
+AUTO_NAME_OPTION = "Emri dhe mbiemri (shtohet automatikisht në fund të formularit)"
+AUTO_PHONE_OPTION = "Numri i telefonit (shtohet automatikisht në fund të formularit)"
 # Up to this many questions the second check of the formatting is skipped: a short questionnaire is easy to
 # check by eye, and the check is a whole extra AI call
 SHORT_QUESTIONNAIRE = 25
@@ -1164,9 +1167,13 @@ def generate_xlsform(input_docx, output_xlsx, coding_mode, data_method=True, sel
     while structure_stack:
         close_block()
 
-    survey.append(with_checks({"type": "text", "name": "emri_mbiemri", "label": fixed("full_name"), "required": "true"},
-                              [simple_check("name")]))
-    add_contact_question("numri_telefonit", "phone", "phone")
+    # The closing contact fields, unless they were picked in "Zgjidh pyetjet që NUK dëshiron të kodosh"
+    excluded = selected_questions or ()
+    if AUTO_NAME_OPTION not in excluded:
+        survey.append(with_checks({"type": "text", "name": "emri_mbiemri", "label": fixed("full_name"),
+                                   "required": "true"}, [simple_check("name")]))
+    if AUTO_PHONE_OPTION not in excluded:
+        add_contact_question("numri_telefonit", "phone", "phone")
 
     def localize(rows):
         """Writes per-language texts as label / label::<language> columns, keeping the column order."""
@@ -1705,7 +1712,7 @@ if uploaded_file:
         st.session_state["question_lines"] = lines
         selected_questions = st.multiselect(
             "Zgjidh pyetjet që NUK dëshiron të kodosh:",
-            options=question_options,
+            options=question_options + [AUTO_NAME_OPTION, AUTO_PHONE_OPTION],
             default=None,
             placeholder="Zgjidhni pyetjet"
         )
