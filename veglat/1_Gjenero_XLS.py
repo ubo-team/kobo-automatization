@@ -1732,7 +1732,10 @@ if uploaded_file:
                 if not autogenerate:
                     ubo_ui.reset_timings()   # after "… me AI" the formatting times stay, the filters are added
                 generated_name = f"{base_name}_gjeneruar.xlsx"
-                temp_xlsx_path = os.path.join(tempfile.gettempdir(), generated_name)
+                # A folder of its own for each generation: the server's temp folder is shared by every session,
+                # and two generations of a questionnaire with the same name wrote into the same file and broke it
+                temp_dir = tempfile.TemporaryDirectory(prefix="ubo_xls_")
+                temp_xlsx_path = os.path.join(temp_dir.name, generated_name)
                 error = None
                 generation_warnings = []
                 routing = {}   # [ask if] / [skip] notes captured while generating, used by the filter step
@@ -1748,9 +1751,13 @@ if uploaded_file:
                 generation_warnings += qai.translation_warnings(qai.check_translations(lines))
 
                 if error:
+                    temp_dir.cleanup()
                     st.error(f"Gabimi: {error}")
                 else:
-                    filter_result = add_ai_filters(temp_xlsx_path, source_blocks, routing)
+                    try:
+                        filter_result = add_ai_filters(temp_xlsx_path, source_blocks, routing)
+                    finally:
+                        temp_dir.cleanup()
                     st.session_state["gen_xlsx_data"] = filter_result["xlsx"]
                     st.session_state["gen_xlsx_name"] = generated_name
                     st.session_state["gen_skipped_other_questions"] = skipped
