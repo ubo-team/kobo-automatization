@@ -40,6 +40,8 @@ PRICING = {"claude-opus-5": (5.00, 25.00), "claude-sonnet-5": (2.00, 10.00), "cl
 CONVERT_EFFORT = "medium"
 FILTER_EFFORT = "medium"
 REVIEW_EFFORT = "medium"
+# Claude as the backup translator when Gemini fails: short texts that need little reasoning
+TRANSLATION_EFFORT = "low"
 
 SOURCE_TYPES = ["docx", "xlsx", "pdf", "txt", "csv", "md"]
 

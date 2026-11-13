@@ -6,6 +6,7 @@ import re
 import time
 import google.generativeai as genai
 from docx import Document
+from translation_fallback import ClaudeFallback
 
 st.set_page_config(layout="centered")
 
@@ -48,6 +49,7 @@ LANG_NAMES = {
 
 MODEL_NAME = "gemini-3.1-flash-lite-preview"
 gemini_model = genai.GenerativeModel(MODEL_NAME)
+claude = ClaudeFallback(st.secrets)   # translates what Gemini fails to translate
 
 
 BATCH_SIZE = 50
@@ -109,23 +111,29 @@ def translate_docx_in_place(doc, from_lang, to_lang):
         batch = para_entries[batch_start:batch_start + BATCH_SIZE]
         texts = [text for _, _, text in batch]
 
+        translations, gemini_error = {}, None
         try:
             translations, in_tok, out_tok = translate_batch(texts, from_lang, to_lang)
             total_in += in_tok
             total_out += out_tok
-
-            for j, (_, para, _) in enumerate(batch):
-                if (j + 1) in translations:
-                    translated = translations[j + 1]
-                    # Put all translated text in first run, clear the rest
-                    if para.runs:
-                        para.runs[0].text = translated
-                        for run in para.runs[1:]:
-                            run.text = ""
-                    else:
-                        para.text = translated
         except Exception as e:
-            errors.append(str(e))
+            gemini_error = e
+
+        error = claude.fill(texts, translations, LANG_NAMES.get(from_lang, from_lang),
+                            LANG_NAMES.get(to_lang, to_lang), gemini_error)
+        if error:
+            errors.append(error)
+
+        for j, (_, para, _) in enumerate(batch):
+            if (j + 1) in translations:
+                translated = translations[j + 1]
+                # Put all translated text in first run, clear the rest
+                if para.runs:
+                    para.runs[0].text = translated
+                    for run in para.runs[1:]:
+                        run.text = ""
+                else:
+                    para.text = translated
 
         done = min(batch_start + BATCH_SIZE, len(para_entries))
         pct = done / len(para_entries)
@@ -159,11 +167,13 @@ if uploaded_file:
                 st.success("Përkthimi përfundoi me sukses!")
 
             model_id = f"models/{MODEL_NAME}"
-            cost = calculate_gemini_cost(total_in, total_out, model_id)
+            cost = calculate_gemini_cost(total_in, total_out, model_id) + claude.cost
+            claude_line = (f"  \nGemini dështoi për **{claude.texts}** tekste; i përktheu Claude "
+                           f"(**${claude.cost:.4f}**)" if claude.texts else "")
             st.info(
                 f"**Kostoja:**  \n"
                 f"Tokenë hyrës: **{total_in:,}** | Tokenë dalës: **{total_out:,}**  \n"
-                f"Kostoja: **${cost:.4f}**"
+                f"Kostoja: **${cost:.4f}**{claude_line}"
             )
 
             st.download_button(

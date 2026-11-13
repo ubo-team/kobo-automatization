@@ -3,6 +3,7 @@
 Works on the tagged line format of questionnaire_ai (texts of several languages joined with " || "):
 - translates a questionnaire into the chosen languages with Gemini,
 - merges translations that come as separate files (one file per language), also with Gemini,
+  (Claude takes over a request when Gemini fails, and the texts Gemini leaves untranslated),
 - keeps or reorders the languages of a questionnaire that already holds them.
 Only the texts change (question, option, note, hint, titles, scale labels); numbers and tags stay as they are.
 """
@@ -13,8 +14,8 @@ from concurrent.futures import ThreadPoolExecutor
 
 import google.generativeai as genai
 
-from questionnaire_ai import (CANCEL, AIError, Cancelled, LANG_SEP, TAG_RE, declared_languages, is_tag,
-                              strip_tags)
+from questionnaire_ai import (CANCEL, TRANSLATION_EFFORT, AIError, Cancelled, LANG_SEP, TAG_RE, _call_claude,
+                              declared_languages, estimate_cost, is_tag, strip_tags)
 
 GEMINI_MODEL = "gemini-2.5-flash"      # the page can override it with GEMINI_MODEL in secrets
 # USD per 1M tokens (input, output), used only for the cost estimate shown in the UI
@@ -56,6 +57,14 @@ def language_name(name):
 
 def configure(api_key):
     genai.configure(api_key=api_key)
+
+
+CLAUDE = None          # (client, model) of the backup translator, set by the page with configure_claude
+
+
+def configure_claude(client, model):
+    global CLAUDE
+    CLAUDE = (client, model) if client is not None else None
 
 
 # ---------------------------------------------------------------------------
@@ -195,6 +204,37 @@ def _gemini(prompt, model_name):
     return data, cost
 
 
+def _ai(prompt, model_name, schema, claude_only=False):
+    """Gemini, or Claude when Gemini fails (or with claude_only, or without a Gemini model).
+    Returns (data, cost, True when Claude answered)."""
+    gemini_error = None
+    if model_name and not claude_only:
+        try:
+            return *_gemini(prompt, model_name), False
+        except AIError as e:
+            gemini_error = e
+            if CLAUDE is None:
+                raise
+    if CLAUDE is None:
+        raise AIError("Mungon çelësi `GEMINI_TRANSLATION_API_KEY` në secrets të aplikacionit.")
+    client, model = CLAUDE
+    try:
+        data, usage = _call_claude(client, "You translate survey questionnaires for KoboToolbox forms.", prompt,
+                                   schema, effort=TRANSLATION_EFFORT, model=model)
+    except Cancelled:
+        raise
+    except AIError as e:
+        raise AIError(f"{gemini_error} Edhe Claude dështoi: {e}" if gemini_error else str(e))
+    return data, estimate_cost(usage, model), True
+
+
+def _items_schema(item_properties):
+    item = {"type": "object", "properties": {"id": {"type": "integer"}, **item_properties},
+            "required": ["id", *item_properties], "additionalProperties": False}
+    return {"type": "object", "properties": {"items": {"type": "array", "items": item}},
+            "required": ["items"], "additionalProperties": False}
+
+
 RULES = """Rules:
 - Formal, clear survey language that a respondent understands when the interviewer reads it out.
 - Text in square brackets is an instruction marker for the interviewer ([READ ALOUD], [INTERVIEWER NOTE: …]): keep the square brackets and translate the words inside. Keep a "!" right after the opening bracket ([!SECTION] -> [!SEKSIONI]).
@@ -213,7 +253,7 @@ def _item_id(it, items):
     return i if i in dict(items) else None
 
 
-def _translate_batch(items, languages, model_name):
+def _translate_batch(items, languages, model_name, claude_only=False):
     listing = "\n".join(json.dumps({"id": i, "text": t}, ensure_ascii=False) for i, t in items)
     prompt = f"""You translate the texts of a survey questionnaire for a KoboToolbox form.
 Translate every item into each of these languages: {', '.join(languages)}.
@@ -225,14 +265,17 @@ Return JSON: {{"items": [{{"id": <id>, "translations": {{{', '.join(f'"{l}": "..
 
 Items:
 {listing}"""
-    data, cost = _gemini(prompt, model_name)
+    schema = _items_schema({"translations": {
+        "type": "object", "properties": {l: {"type": "string"} for l in languages},
+        "required": list(languages), "additionalProperties": False}})
+    data, cost, by_claude = _ai(prompt, model_name, schema, claude_only)
     result = {}
     for it in data.get("items", []) if isinstance(data, dict) else []:
         i = _item_id(it, items)
         tr = it.get("translations") if i is not None else None
         if isinstance(tr, dict):
             result[i] = {l: str(tr.get(l) or "").strip() for l in languages}
-    return result, cost
+    return result, cost, by_claude
 
 
 def _align_batch(items, language, main_language, reference, model_name):
@@ -251,7 +294,8 @@ Return JSON: {{"items": [{{"id": <id>, "text": "...", "found": true}}]}} with on
 
 Items ({main_language}):
 {listing}"""
-    data, cost = _gemini(prompt, model_name)
+    schema = _items_schema({"text": {"type": "string"}, "found": {"type": "boolean"}})
+    data, cost, by_claude = _ai(prompt, model_name, schema)
     result, not_found = {}, []
     for it in data.get("items", []) if isinstance(data, dict) else []:
         i = _item_id(it, items)
@@ -259,7 +303,7 @@ Items ({main_language}):
             result[i] = str(it["text"]).strip()
             if it.get("found") is False:
                 not_found.append(i)
-    return result, not_found, cost
+    return result, not_found, cost, by_claude
 
 
 def _batches(items, size):
@@ -304,15 +348,19 @@ def translate(lines, languages, model_name=GEMINI_MODEL):
     came back empty. Returns (lines, notes, cost)."""
     lines = _first_language(lines)
     items = _source_texts(lines)
-    translations, cost = {}, 0.0
-    for attempt in range(2):
+    translations, cost, by_claude = {}, 0.0, 0
+    # two rounds with Gemini; the texts still missing after them go to Claude
+    for attempt in range(3 if CLAUDE else 2):
         todo = [(i, t) for i, t in items
                 if i not in translations or not all(translations[i].get(l) for l in languages)]
         if not todo:
             break
-        for result, c in _run(lambda b: _translate_batch(b, languages, model_name), _batches(todo, BATCH_SIZE)):
+        claude_only = attempt == 2
+        for result, c, claude in _run(lambda b: _translate_batch(b, languages, model_name, claude_only),
+                                      _batches(todo, BATCH_SIZE)):
             translations.update(result)
             cost += c
+            by_claude += claude
     by_text = {t: translations.get(i, {}) for i, t in items}
     missing = sum(1 for i, _ in items if not all(translations.get(i, {}).get(l) for l in languages))
 
@@ -321,7 +369,11 @@ def translate(lines, languages, model_name=GEMINI_MODEL):
         return _keep_blanks(src, by_text.get(src, {}).get(languages[k]) or src)
 
     notes = [f"Gemini nuk ktheu përkthim për {missing} tekste; aty mbeti teksti origjinal."] if missing else []
-    return _rebuild(lines, languages, text_for), notes, cost
+    return _rebuild(lines, languages, text_for), notes + _claude_note(by_claude), cost
+
+
+def _claude_note(n):
+    return [f"Gemini dështoi në {n} kërkesa përkthimi; ato i përktheu Claude."] if n else []
 
 
 def merge_translations(lines, languages, references, model_name=GEMINI_MODEL):
@@ -330,15 +382,16 @@ def merge_translations(lines, languages, references, model_name=GEMINI_MODEL):
     lines = _first_language(lines)
     items = _source_texts(lines)
     texts = {lang: {} for lang in languages[1:]}
-    notes, cost = [], 0.0
+    notes, cost, by_claude = [], 0.0, 0
     for lang in languages[1:]:
         results = _run(lambda b: _align_batch(b, lang, languages[0], references[lang], model_name),
                        _batches(items, ALIGN_BATCH_SIZE))
         not_found = 0
-        for result, nf, c in results:
+        for result, nf, c, claude in results:
             texts[lang].update(result)
             not_found += len(nf)
             cost += c
+            by_claude += claude
         if not_found:
             notes.append(f"{not_found} tekste nuk u gjetën në dokumentin {lang} dhe i përktheu Gemini; kontrolloji.")
     by_text = {lang: {t: texts[lang].get(i) for i, t in items} for lang in languages[1:]}
@@ -349,7 +402,7 @@ def merge_translations(lines, languages, references, model_name=GEMINI_MODEL):
             return src
         return _keep_blanks(src, by_text[languages[k]].get(src) or "")
 
-    return _rebuild(lines, languages, text_for), notes, cost
+    return _rebuild(lines, languages, text_for), notes + _claude_note(by_claude), cost
 
 
 def _first_language(lines):

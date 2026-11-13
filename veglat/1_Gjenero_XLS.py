@@ -1268,7 +1268,8 @@ def apply_languages(lines):
         return new_lines, [], 0.0
 
     model = get_gemini_model()
-    if model is None:
+    qtr.configure_claude(get_claude_client(), qai.MODEL)   # Claude translates when Gemini fails
+    if model is None and qtr.CLAUDE is None:
         raise qai.AIError("Mungon çelësi `GEMINI_TRANSLATION_API_KEY` në secrets të aplikacionit.")
     if translation_mode == TR_AI:
         return qtr.translate(lines, form_languages, model)
