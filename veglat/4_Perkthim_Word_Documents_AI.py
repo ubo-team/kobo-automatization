@@ -168,7 +168,7 @@ if uploaded_file:
 
             model_id = f"models/{MODEL_NAME}"
             cost = calculate_gemini_cost(total_in, total_out, model_id) + claude.cost
-            claude_line = (f"  \nGemini dështoi për **{claude.texts}** tekste; i përktheu Claude "
+            claude_line = (f"  \nGemini dështoi për **{claude.texts}** tekste; i përktheu Agjenti AI "
                            f"(**${claude.cost:.4f}**)" if claude.texts else "")
             st.info(
                 f"**Kostoja:**  \n"

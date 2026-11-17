@@ -45,6 +45,12 @@ TOOLS = [
     Tool("Pyetësorët", "Gjenero XLS për KoboToolbox",
          "Kthe pyetësorin në formular XLS për KoboToolbox, me gjuhët dhe filtrat e tij.",
          "Gjenero_XLS", "veglat/1_Gjenero_XLS.py", "icons/survey-xmark.svg", "DOCX · XLSX · PDF", "AI"),
+    Tool("Pyetësorët", "Dizajnimi i pyetësorit",
+         "Dizajno pyetësorin e ri nga pyetjet e pyetësorëve të kaluar dhe shkarkoje në Word.",
+         "Dizajnimi_i_pyetesorit", "veglat/Dizajnimi_i_pyetesorit.py", "icons/survey-design.svg", "DOCX", "AI"),
+    Tool("Pyetësorët", "Banka e pyetjeve",
+         "Pyetësorët e projekteve të kaluara, të kategorizuar sipas industrisë dhe llojit.",
+         "Banka_e_pyetjeve", "veglat/Banka_e_pyetjeve.py", "icons/question-bank.svg", "KoboToolbox", "AI"),
     Tool("Përkthimet", "Përkthim i dokumenteve Excel",
          "Përkthe dokumentet Excel automatikisht me inteligjencë artificiale.",
          "Perkthim_Excel_Files_AI", "veglat/2_Perkthim_Excel_Files_AI.py", "icons/file-excel.svg", "XLSX", "AI"),
@@ -355,7 +361,13 @@ def page_script():
     ensureThemeButton();
     const box = ensureWaitBox();
     const running = !!D.querySelector('[data-testid="stStatusWidgetRunningIcon"], [data-testid="stStatusWidgetRunningManIcon"]');
-    if (running) {
+    // waits with a spinner or progress bar of their own ("Po lexohet banka e pyetjeve...", "Agjenti AI po ...") get no wait window
+    const ownSpinner = Array.from(D.querySelectorAll('[data-testid="stSpinner"], [data-testid="stProgress"]'))
+      .some(s => s.textContent.includes("Po lexohet banka") || s.textContent.includes("Agjenti AI"));
+    if (running && ownSpinner) {
+      since = null;
+      box.classList.remove("show");
+    } else if (running) {
       since = since || Date.now();
       if (Date.now() - since > 1200 && !box.classList.contains("show")) {
         const b = box.querySelector("button"); b.disabled = false; b.textContent = "Anulo kërkesën";
@@ -393,6 +405,9 @@ STEP_LABELS = {
     "repair_translations": "Plotësimi i përkthimeve",
     "generate_filters": "Filtrat",
     "review_filters": "Kontrolli i filtrave",
+    "select_questionnaires": "Zgjedhja e pyetësorëve",
+    "design": "Dizajnimi i pyetësorit",
+    "regenerate_question": "Rigjenerimi i pyetjes",
 }
 
 
@@ -411,21 +426,25 @@ def show_timings():
                    + f" — gjithsej {total:.0f} s")
 
 
-def interruptible(fn, *args, **kwargs):
+def interruptible(fn, *args, on_text=None, **kwargs):
     """Runs a long AI call (Claude / Gemini) so that "Anulo kërkesën" (Streamlit's Stop) stops it at once.
 
     The call runs in a thread; meanwhile the page sends a tiny update every 0.25 s, which is where Streamlit
     notices a stop request. When the page is stopped, the call gets the stop signal too
-    (questionnaire_ai.CANCEL) and ends its request instead of running on and costing."""
+    (questionnaire_ai.CANCEL) and ends its request instead of running on and costing.
+    on_text(text) is called every 0.25 s with the answer Claude has streamed so far (for a progress bar)."""
     import threading
     import streamlit as st
-    from questionnaire_ai import CANCEL
+    from questionnaire_ai import CANCEL, STREAM
+
+    sink = [] if on_text else None
 
     stop = threading.Event()
     result = {}
 
     def work():
         CANCEL.set(stop)
+        STREAM.set(sink)
         try:
             result["value"] = fn(*args, **kwargs)
         except BaseException as e:      # re-raised in the page's thread
@@ -439,6 +458,8 @@ def interruptible(fn, *args, **kwargs):
         while worker.is_alive():
             worker.join(0.25)
             heartbeat.empty()
+            if on_text:
+                on_text("".join(sink))
     finally:
         if worker.is_alive():
             stop.set()
@@ -568,7 +589,7 @@ label[data-testid="stWidgetLabel"] { margin-bottom: 4px; }
     font-family: "Space Grotesk", system-ui, sans-serif; font-weight: 700;
     font-size: clamp(26px, 3.4vw, 34px); line-height: 1.15; letter-spacing: -.02em; color: var(--ubo-ink); margin-top: 2px;
 }
-.ubo-lede { color: var(--ubo-muted); font-size: 16px; line-height: 1.55; margin: 14px 0 0 !important; max-width: 640px; }
+.ubo-lede { color: var(--ubo-muted); font-size: 16px; line-height: 1.55; margin: 14px 0 0 !important; }
 .ubo-rule {
     height: 2px; border-radius: 2px; opacity: .5; margin: 22px 0 10px;
     background: linear-gradient(90deg, #22C6A0, #3E7FF5 34%, #F4C81E 66%, #EC1E8C);
@@ -606,7 +627,8 @@ def card(title, step=None, subtitle="", key=None):
     box = st.container(key=f"ubo_card_{key}")
     step_html = f'<span class="ubo-step">{step}</span>' if step is not None else ""
     sub_html = f'<div class="ubo-card-sub">{subtitle}</div>' if subtitle else ""
-    box.markdown(f'<div class="ubo-card-head">{step_html}{title}</div>{sub_html}', unsafe_allow_html=True)
+    if title or step is not None or subtitle:      # a card without a heading: card("", key="...")
+        box.markdown(f'<div class="ubo-card-head">{step_html}{title}</div>{sub_html}', unsafe_allow_html=True)
     return box
 
 
@@ -614,6 +636,8 @@ def card(title, step=None, subtitle="", key=None):
 NAV_ICONS = {
     "": ":material/home:",
     "Gjenero_XLS": ":material/fact_check:",
+    "Dizajnimi_i_pyetesorit": ":material/edit_note:",
+    "Banka_e_pyetjeve": ":material/database:",
     "Perkthim_Excel_Files_AI": ":material/table_view:",
     "Perkthim_Word_Documents_AI": ":material/description:",
     "Perkthe_Zyrtarisht": ":material/translate:",

@@ -201,7 +201,7 @@ if uploaded_file:
                 model_id = f"models/{MODEL_NAME}"
                 claude_cost, claude_texts = claude.cost - claude_cost, claude.texts - claude_texts
                 block_cost = calculate_gemini_cost(block_in_tokens, block_out_tokens, model_id) + claude_cost
-                claude_line = (f"  \nGemini dështoi për **{claude_texts}** tekste; i përktheu Claude "
+                claude_line = (f"  \nGemini dështoi për **{claude_texts}** tekste; i përktheu Agjenti AI "
                                f"(**${claude_cost:.4f}**)" if claude_texts else "")
                 st.info(
                     f"**Kostoja e Bllokut {block_id + 1}:**  \n"

@@ -1,0 +1,36 @@
+# Përditëson bankën e pyetjeve (Google Sheet "UBO – Banka e pyetjeve") një herë në muaj: merr nga të gjitha
+# llogaritë Kobo pyetësorët e rinj ose të ndryshuar dhe kategorizon me Claude vetëm ata që nuk janë kategorizuar.
+# Mund të niset edhe me dorë: Actions -> "Banka e pyetjeve" -> Run workflow.
+#
+# Kërkon një secret të repos me emrin UBO_SECRETS, me të njëjtën përmbajtje si .streamlit/secrets.toml
+# (Settings -> Secrets and variables -> Actions -> New repository secret).
+# Repo është publik: skripti me --quiet shkruan në log vetëm numra, asnjë titull pyetësori apo emër llogarie.
+name: Banka e pyetjeve
+
+on:
+  schedule:
+    - cron: "0 3 1 * *"   # data 1 e çdo muaji, ora 03:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: banka-e-pyetjeve
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Instalo paketat
+        run: pip install requests gspread google-auth "anthropic>=1.7" openpyxl pandas python-docx docx2python
+      - name: Përditëso bankën
+        env:
+          UBO_SECRETS: ${{ secrets.UBO_SECRETS }}
+        run: python -m question_bank --quiet

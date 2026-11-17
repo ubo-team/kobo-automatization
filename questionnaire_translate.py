@@ -224,7 +224,7 @@ def _ai(prompt, model_name, schema, claude_only=False):
     except Cancelled:
         raise
     except AIError as e:
-        raise AIError(f"{gemini_error} Edhe Claude dështoi: {e}" if gemini_error else str(e))
+        raise AIError(f"{gemini_error} Edhe Agjenti AI dështoi: {e}" if gemini_error else str(e))
     return data, estimate_cost(usage, model), True
 
 
@@ -373,7 +373,7 @@ def translate(lines, languages, model_name=GEMINI_MODEL):
 
 
 def _claude_note(n):
-    return [f"Gemini dështoi në {n} kërkesa përkthimi; ato i përktheu Claude."] if n else []
+    return [f"Gemini dështoi në {n} kërkesa përkthimi; ato i përktheu Agjenti AI."] if n else []
 
 
 def merge_translations(lines, languages, references, model_name=GEMINI_MODEL):

@@ -52,7 +52,7 @@ class ClaudeFallback:
             data, usage = qai._call_claude(self.client, SYSTEM, f"{from_name} to {to_name}.\n\n{numbered}", SCHEMA,
                                            max_tokens=32000, effort=qai.TRANSLATION_EFFORT, model=self.model)
         except qai.AIError as e:
-            return f"Gemini: {gemini_error}; Claude: {e}" if gemini_error else f"Claude: {e}"
+            return f"Gemini: {gemini_error}; Agjenti AI: {e}" if gemini_error else f"Agjenti AI: {e}"
         self.cost += qai.estimate_cost(usage, self.model)
         for it in data.get("translations", []):
             n, text = it.get("n"), str(it.get("text") or "").strip()

@@ -68,7 +68,7 @@ a.lp-logo img { height: 100%; width: auto; object-fit: contain !important; displ
 }
 
 /* ---------- Rreshtat e grupeve ----------
-   Rreshti 1: Pyetësorët (1 kartë) + Analiza (2 karta); rreshti 2: Përkthimet (3 karta).
+   Grupet ndahen në rreshta me jo më shumë se 3 karta (shih ROWS më poshtë).
    Në kompjuter secili element merr vendin e tij në rrjetin me 3 kolona (--col / --row);
    në telefon gjithçka shkon njëra pas tjetrës, grup pas grupi. */
 .lp-row { display: grid; grid-template-columns: repeat(3, 1fr); column-gap: 22px; row-gap: 18px; margin-top: 40px; }
@@ -168,8 +168,19 @@ a.lp-card:hover .lp-go span { transform: translateX(4px); }
 </style>
 """
 
-# Rreshtat e kryefaqes: grupet në secilin rresht (bashkë zënë 3 kolona)
-ROWS = [["Pyetësorët", "Analiza"], ["Përkthimet"]]
+# Rreshtat e kryefaqes: grupet vendosen me radhë (si te ubo_ui.SECTIONS) në rreshta me jo më shumë se 3 karta;
+# një grup që nuk nxë në rreshtin aktual kalon në rreshtin tjetër. Kështu një vegël e re nuk e prish rrjetin.
+COLUMNS = 3
+ROWS, _used = [], COLUMNS
+for _section in ubo_ui.SECTIONS:
+    _n = sum(t.section == _section for t in ubo_ui.TOOLS)
+    if not _n:
+        continue
+    if _used + _n > COLUMNS:
+        ROWS.append([])
+        _used = 0
+    ROWS[-1].append(_section)
+    _used += _n
 
 
 def tool_card(tool, col, delay):

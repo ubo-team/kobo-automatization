@@ -1379,7 +1379,7 @@ def add_ai_filters(xlsx_path, source_blocks, routing=None):
     sheets = qai.read_form(data)
     cost = 0.0
     try:
-        with st.spinner("Claude po shton filtrat sipas pyetësorit..."):
+        with st.spinner("Agjenti AI po shton filtrat sipas pyetësorit..."):
             filters, notes, usage = ubo_ui.interruptible(qai.generate_filters, client, source_blocks, sheets, routing=routing)
             cost += qai.estimate_cost(usage)
             applied, rejected = qai.apply_filters(sheets, filters)
@@ -1449,7 +1449,7 @@ def render_filter_check():
             if client is None:
                 st.warning("Mungon çelësi `ANTHROPIC_API_KEY` – u kryen vetëm testet automatike, pa kontrollin nga AI.")
             else:
-                with st.spinner("Claude po kontrollon filtrat..."):
+                with st.spinner("Agjenti AI po kontrollon filtrat..."):
                     review, usage = ubo_ui.interruptible(qai.review_filters, client, sheets, report, source_blocks)
                     cost = qai.estimate_cost(usage)
                 fixes = [i for i in review["issues"] if i["action"] in ("replace", "remove")]
@@ -1590,7 +1590,7 @@ if uploaded_file:
                 if client is None:
                     st.error("Mungon çelësi `ANTHROPIC_API_KEY` në secrets të aplikacionit.")
                     st.stop()
-                with st.spinner("Claude po lexon pyetësorin dhe po përcakton llojet e pyetjeve..."):
+                with st.spinner("Agjenti AI po lexon pyetësorin dhe po përcakton llojet e pyetjeve..."):
                     try:
                         ai_lines, ai_notes, usage = ubo_ui.interruptible(qai.convert_questionnaire, client, source_blocks, language_note())
                     except qai.AIError as e:
@@ -1605,7 +1605,7 @@ if uploaded_file:
                                            f"anashkalua sepse pyetësori është i shkurtër ({n_questions} pyetje). "
                                            f"Krahasoje me sy me pyetësorin."]
                 else:
-                    with st.spinner("Claude po kontrollon për së dyti që të gjitha pyetjet dhe shënimet janë në vendin e tyre..."):
+                    with st.spinner("Agjenti AI po kontrollon për së dyti që të gjitha pyetjet dhe shënimet janë në vendin e tyre..."):
                         try:
                             ai_lines, review_changes, review_cost = ubo_ui.interruptible(qai.review_completeness, client, source_blocks, ai_lines)
                             ai_notes = ai_notes + review_changes
@@ -1624,7 +1624,7 @@ if uploaded_file:
                         st.stop()
                 # Retest the translations of a merged questionnaire: lines left in one language are filled in from it
                 if translation_mode == TR_MERGED and qai.check_translations(ai_lines):
-                    with st.spinner("Disa tekste nuk janë përkthyer – Claude po i plotëson dhe po i riteston..."):
+                    with st.spinner("Disa tekste nuk janë përkthyer – Agjenti AI po i plotëson dhe po i riteston..."):
                         try:
                             ai_lines, _, translation_notes, translation_cost = ubo_ui.interruptible(qai.repair_translations,
                                 client, source_blocks, ai_lines)

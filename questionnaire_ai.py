@@ -57,6 +57,9 @@ class Cancelled(AIError):
 # Set by ubo_ui.interruptible() to a threading.Event that is set when the page is stopped; the AI calls
 # check it while they stream, so a stopped page also stops the request instead of letting it run (and cost).
 CANCEL = contextvars.ContextVar("ubo_cancel", default=None)
+# A list that _call_claude appends the answer's text to while it streams (set by ubo_ui.interruptible), so a page
+# can show how far Claude has written
+STREAM = contextvars.ContextVar("ubo_stream", default=None)
 
 
 def check_cancelled():
@@ -96,10 +99,13 @@ def _call_claude(client, system, content, schema, max_tokens=64000, effort=FILTE
         params.update(betas=[FALLBACK_BETA], fallbacks="default")
     started, first_event = time.monotonic(), None
     try:
+        sink = STREAM.get()
         with client.beta.messages.stream(**params) as stream:
-            for _ in stream:            # read event by event, so a stop is noticed while Claude is writing
+            for event in stream:        # read event by event, so a stop is noticed while Claude is writing
                 first_event = first_event or time.monotonic()
                 check_cancelled()
+                if sink is not None and event.type == "content_block_delta"                         and getattr(event.delta, "type", "") == "text_delta":
+                    sink.append(event.delta.text)
             message = stream.get_final_message()
         # Server log: waiting for the first answer vs. writing it, and how much was written (thinking included)
         u = message.usage
@@ -108,23 +114,23 @@ def _call_claude(client, system, content, schema, max_tokens=64000, effort=FILTE
               f"input {u.input_tokens} + cache {u.cache_read_input_tokens or 0}/{u.cache_creation_input_tokens or 0}, "
               f"output {u.output_tokens} tokens", flush=True)
     except anthropic.AuthenticationError:
-        raise AIError("Çelësi API i Claude (ANTHROPIC_API_KEY) nuk është i vlefshëm.")
+        raise AIError("Çelësi API i Agjentit AI (ANTHROPIC_API_KEY) nuk është i vlefshëm.")
     except anthropic.RateLimitError:
-        raise AIError("Kufiri i kërkesave te Claude u tejkalua. Provo përsëri pas pak minutash.")
+        raise AIError("Kufiri i kërkesave te Agjenti AI u tejkalua. Provo përsëri pas pak minutash.")
     except anthropic.BadRequestError as e:
         if "credit balance" in str(e.message).lower():
             raise AIError("Llogaria e Anthropic nuk ka kredit të mjaftueshëm. Shto kredit te "
                           "console.anthropic.com → Plans & Billing dhe provo përsëri.")
-        raise AIError(f"Kërkesa te Claude u refuzua: {e.message}")
+        raise AIError(f"Kërkesa te Agjenti AI u refuzua: {e.message}")
     except anthropic.APIStatusError as e:
-        raise AIError(f"Gabim nga shërbimi i Claude ({e.status_code}). Provo përsëri.")
+        raise AIError(f"Gabim nga shërbimi i Agjentit AI ({e.status_code}). Provo përsëri.")
     except anthropic.APIConnectionError:
-        raise AIError("Nuk u arrit lidhja me Claude. Kontrollo internetin dhe provo përsëri.")
+        raise AIError("Nuk u arrit lidhja me Agjentin AI. Kontrollo internetin dhe provo përsëri.")
 
     if message.stop_reason == "refusal":
-        raise AIError("Claude refuzoi ta përpunojë këtë dokument.")
+        raise AIError("Agjenti AI refuzoi ta përpunojë këtë dokument.")
     if message.stop_reason == "max_tokens":
-        raise AIError("Përgjigja e Claude u ndërpre sepse arriti kufirin e gjatësisë. Pyetësori është shumë i gjatë "
+        raise AIError("Përgjigja e Agjentit AI u ndërpre sepse arriti kufirin e gjatësisë. Pyetësori është shumë i gjatë "
                       "për një përpunim të vetëm: ndaje në pjesë dhe provo përsëri.")
 
     # If a fallback model took over, only the text after the last switch point is the answer
@@ -134,7 +140,7 @@ def _call_claude(client, system, content, schema, max_tokens=64000, effort=FILTE
     try:
         return json.loads(text), message.usage
     except json.JSONDecodeError:
-        raise AIError("Përgjigja e Claude nuk ishte në formatin e pritur. Provo përsëri.")
+        raise AIError("Përgjigja e Agjentit AI nuk ishte në formatin e pritur. Provo përsëri.")
 
 
 # ---------------------------------------------------------------------------
@@ -431,7 +437,7 @@ def convert_questionnaire(client, source_blocks, language_note=""):
                                effort=CONVERT_EFFORT)
     lines = [line.strip() for line in data["lines"] if line.strip()]
     if not lines:
-        raise AIError("Claude nuk gjeti pyetje në dokument.")
+        raise AIError("Agjenti AI nuk gjeti pyetje në dokument.")
     return lines, data["notes"], usage
 
 
