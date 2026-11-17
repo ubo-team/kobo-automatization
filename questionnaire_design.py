@@ -153,7 +153,8 @@ def bank_context(rows, questions):
             sources[ref] = f"{r['titulli']} — {q['name'] or 'pyetja ' + str(q['nr'])}: {q['text'][:120]}"
             options = "; ".join(f"{c}={label}" for c, label in q["options"])
             hint = f" (hint: {q['hint']})" if q["hint"] else ""
-            lines.append(f"[{ref}] ({q['type']}) {q['text']}{hint}" + (f" — {options}" if options else ""))
+            rows = f" — rows: {' | '.join(q['items'])}" if q.get("items") else ""
+            lines.append(f"[{ref}] ({q['type']}) {q['text']}{hint}{rows}" + (f" — {options}" if options else ""))
         lines.append("</questionnaire>")
         parts.append("\n".join(lines))
     return "\n\n".join(parts), sources

@@ -64,7 +64,7 @@ with ubo_ui.card("", key="banka"):     # the page header already says what it is
 
     m1, m2, m3, m4, upd = st.columns([1, 1, 1, 1, 1.4], vertical_alignment="center")
     m1.metric("Pyetësorë", f"{len(df):,}")
-    m2.metric("Pyetje", f"{sum(len(v) for v in questions.values()):,}")
+    m2.metric("Pyetje", f"{sum(q['type'] != 'note' for v in questions.values() for q in v):,}")
     m3.metric("Industri", df["industria"].replace("", pd.NA).nunique())
     m4.metric("Lloje studimi", df["lloji"].replace("", pd.NA).nunique())
     with upd:
@@ -133,7 +133,8 @@ with ubo_ui.card("", key="banka"):     # the page header already says what it is
         st.markdown(f"**{row['titulli']}** — {row['pershkrimi']}")
         st.caption(f"Burimet: {row['burimet']}")
         st.dataframe(pd.DataFrame([{"Nr": q["nr"], "Emri": q["name"], "Lloji": q["type"], "Grupi": q["group"],
-                                    "Pyetja": q["text"], "Opsionet": "; ".join(f"{c}={l}" for c, l in q["options"])}
+                                    "Pyetja": q["text"], "Rreshtat": " | ".join(q.get("items") or []),
+                                    "Opsionet": "; ".join(f"{c}={l}" for c, l in q["options"])}
                                    for q in questions.get(row["id"], [])]), hide_index=True, width="stretch")
     else:
         st.caption("Klikoni një rresht për të parë pyetjet e pyetësorit.")
@@ -141,6 +142,7 @@ with ubo_ui.card("", key="banka"):     # the page header already says what it is
     output = BytesIO()
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
         df.drop(columns=["perdorshem"]).to_excel(writer, sheet_name="Pyetesoret", index=False)
-        pd.DataFrame([{"pyetesori_id": qid, **q, "options": "; ".join(f"{c}={l}" for c, l in q["options"])}
+        pd.DataFrame([{"pyetesori_id": qid, **q, "options": "; ".join(f"{c}={l}" for c, l in q["options"]),
+                       "items": " | ".join(q.get("items") or [])}
                       for qid, qs in questions.items() for q in qs]).to_excel(writer, sheet_name="Pyetjet", index=False)
     st.download_button("Shkarko bankën (Excel)", output.getvalue(), file_name="banka_e_pyetjeve.xlsx")

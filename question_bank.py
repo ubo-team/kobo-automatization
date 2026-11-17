@@ -30,7 +30,14 @@ GROUP_START = {"begin_group", "begin group", "begin_repeat", "begin repeat", "be
 GROUP_END = {"end_group", "end group", "end_repeat", "end repeat", "end_kobomatrix"}
 # Rows of a form that are not questions: metadata, calculations, hidden values
 SKIP_TYPES = {"start", "end", "today", "deviceid", "username", "phonenumber", "simserial", "subscriberid", "imei",
-              "audit", "calculate", "hidden", "background-audio", "xml-external", "start-geopoint"}
+              "audit", "calculate", "hidden", "background-audio", "xml-external", "start-geopoint",
+              # field data, not questions (GPS, recordings, photos, scans)
+              "geopoint", "geotrace", "geoshape", "audio", "image", "video", "file", "barcode", "acknowledge"}
+# "Other, please specify" boxes that follow an option: not questions of their own
+SPECIFY_RE = re.compile(r"specif|^\W*(tjet[eë]r|t[eë] tjer[eë]|other|ostalo|drugo)\b|navedi|write in|shëno sa|"
+                        r"shëno shum", re.IGNORECASE)
+# rows of a matrix / ranking repeat across matrices; they are kept as they are
+ROW_TYPES = {"score__row", "rank__level"}
 MIN_QUESTIONS = 3        # forms with fewer questions are tests or empty drafts
 SIMILARITY = 0.9         # share of common questions above which two forms are copies of one questionnaire
 WORKERS = 8              # parallel requests to Kobo
@@ -72,7 +79,7 @@ CATALOG_COLUMNS = ["id", "titulli", "perdorshem", "industria", "lloji", "metodol
                    "kategorizuar"]
 CATEGORY_COLUMNS = ["perdorshem", "industria", "lloji", "metodologjite", "temat", "klienti", "pershkrimi",
                     "kategorizuar"]
-QUESTION_COLUMNS = ["pyetesori_id", "nr", "emri", "lloji", "grupi", "teksti", "opsionet", "udhezimi",
+QUESTION_COLUMNS = ["pyetesori_id", "nr", "emri", "lloji", "grupi", "teksti", "opsionet", "rreshtat", "udhezimi",
                     "perkthimet"]
 
 
@@ -153,40 +160,100 @@ def _staff_question(label, list_name, name):
 
 
 def parse_content(content):
-    """(languages, questions) of an asset's content: groups, metadata and calculations are left out."""
+    """(languages, questions) of an asset's content: groups, metadata and calculations are left out. A matrix
+    (Kobo's score / rank / kobomatrix questions, or select questions with one list in a "table-list" group) is
+    one question, its rows in "items"."""
     languages = [l or "default" for l in (content.get("translations") or [None])]
     lists = {}
     for c in content.get("choices") or []:
         lists.setdefault(c.get("list_name"), []).append(
             {"code": str(c.get("name") or c.get("$autovalue") or ""), "label": _texts(c.get("label"), languages)})
-    questions, groups = [], []
+    questions, groups, seen = [], [], set()
+    matrix = None           # the matrix question whose rows follow
     for row in content.get("survey") or []:
         rtype = str(row.get("type") or "").strip()
         if rtype in GROUP_START:
             label = _texts(row.get("label"), languages)
-            groups.append(next(iter(label.values()), row.get("name") or ""))
+            title = next(iter(label.values()), row.get("name") or "")
+            kind = ("kobomatrix" if rtype == "begin_kobomatrix" else
+                    "table" if "table-list" in str(row.get("appearance") or "") else "")
+            groups.append({"title": title, "kind": kind})
+            matrix = None
+            if kind == "kobomatrix":
+                rows = lists.get(row.get("kobo--matrix_list"), [])
+                matrix = _matrix(row, label, groups, [_main_text(o["label"]) for o in rows])
+                questions.append(matrix)
             continue
         if rtype in GROUP_END:
             if groups:
                 groups.pop()
+            matrix = None
             continue
         base, _, list_name = rtype.partition(" ")
-        label = _texts(row.get("label"), languages)
-        if base in SKIP_TYPES or not label:
-            continue
         list_name = (row.get("select_from_list_name") or row.get("kobo--rank-items")
                      or row.get("kobo--score-choices") or list_name.strip())
+        options = lists.get(list_name, []) if list_name else []
+        inside = groups[-1]["kind"] if groups else ""
+        if inside == "kobomatrix":              # the columns of a kobomatrix: its answer scale
+            if matrix is not None and not matrix["options"] and options:
+                matrix["options"] = options
+            continue
+        label = _texts(row.get("label"), languages)
+        if base in ("end_score", "end_rank"):
+            matrix = None
+            continue
+        if base in ROW_TYPES:                   # a row of the score / rank question above
+            text = _main_text(label)
+            if matrix is not None and base == "score__row" and text:
+                matrix["items"].append(text)
+            continue
+        if base in SKIP_TYPES or not label:
+            continue
         if _staff_question(label, list_name, row.get("name")):
             continue
+        text = _main_text(label)
+        if not re.search(r"[^\W\d_]", text):           # "1", "2" … without words
+            continue
+        if base == "text" and len(text) < 70 and SPECIFY_RE.search(text):
+            continue
+        if inside == "table" and base in ("select_one", "select_multiple"):
+            if matrix is not None and matrix.get("list") == list_name:
+                matrix["items"].append(text)
+                continue
+            title = groups[-1]["title"]
+            matrix = _matrix(row, {languages[0]: title} if title else label, groups, [text], options, list_name)
+            questions.append(matrix)
+            continue
+        matrix = None
+        if base in ("begin_score", "begin_rank"):
+            matrix = _matrix(row, label, groups, [], options)
+            matrix["type"] = "matrix" if base == "begin_score" else "rank"
+            matrix["hint"] = _texts(row.get("hint"), languages)
+            questions.append(matrix)
+            continue
+        signature = (base, text.strip().lower(), tuple(o["code"] for o in options))
+        if signature in seen:                           # the same question again (loops, copies): once
+            continue
+        seen.add(signature)
         questions.append({
             "name": str(row.get("name") or row.get("$autoname") or ""),
             "type": base,
-            "group": " / ".join(g for g in groups if g),
+            "group": " / ".join(g["title"] for g in groups if g["title"]),
             "label": label,
             "hint": _texts(row.get("hint"), languages),
-            "options": lists.get(list_name, []) if list_name else [],
+            "options": options,
+            "items": [],
         })
-    return languages, questions
+    for q in questions:
+        q.pop("list", None)
+    return languages, [q for q in questions if q["type"] != "matrix" or q["items"]]
+
+
+def _matrix(row, label, groups, items, options=(), list_name=None):
+    return {"name": str(row.get("name") or row.get("$autoname") or ""), "type": "matrix",
+            "group": " / ".join(g["title"] for g in groups[:-1] if g["title"]) if groups and groups[-1]["kind"]
+            else " / ".join(g["title"] for g in groups if g["title"]),
+            "label": label, "hint": {}, "options": list(options), "items": list(items), "list": list_name}
 
 
 def fetch_forms(account, server, token, progress=None):
@@ -385,6 +452,7 @@ def _question_rows(form):
             "teksti": _main_text(q["label"]),
             "opsionet": json.dumps([[o["code"], _main_text(o["label"])] for o in q["options"]], ensure_ascii=False)
             if q["options"] else "",
+            "rreshtat": json.dumps(q.get("items") or [], ensure_ascii=False) if q.get("items") else "",
             "udhezimi": _main_text(q["hint"]),
             "perkthimet": json.dumps({"label": q["label"], "hint": q["hint"],
                                       "options": [o["label"] for o in q["options"]]}, ensure_ascii=False)
@@ -427,7 +495,7 @@ def _save_last_sync(sh):
 
 def load_bank(secrets):
     """(catalog rows, {questionnaire id: [question dicts]}) from the sheet. Question dicts carry "nr", "name",
-    "type", "group", "text", "options" ([[code, label]]) and "hint"."""
+    "type", "group", "text", "options" ([[code, label]]), "items" (the rows of a matrix) and "hint"."""
     sh = open_sheet(secrets)
     catalog = _read(sh, CATALOG_SHEET, CATALOG_COLUMNS)
     questions = {}
@@ -437,9 +505,13 @@ def load_bank(secrets):
             options = json.loads(r.get("opsionet") or "[]")
         except json.JSONDecodeError:
             options = []
+        try:
+            items = json.loads(r.get("rreshtat") or "[]")
+        except json.JSONDecodeError:
+            items = []
         questions.setdefault(r["pyetesori_id"], []).append({
             "nr": r.get("nr", ""), "name": r.get("emri", ""), "type": r.get("lloji", ""),
-            "group": r.get("grupi", ""), "text": r.get("teksti", ""), "options": options,
+            "group": r.get("grupi", ""), "text": r.get("teksti", ""), "options": options, "items": items,
             "hint": r.get("udhezimi", ""),
         })
     return catalog, questions
