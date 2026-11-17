@@ -19,3 +19,4 @@ google-generativeai
 anthropic>=1.7
 pypdf
 numpy
+scipy

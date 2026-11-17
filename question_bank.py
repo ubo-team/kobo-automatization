@@ -19,6 +19,7 @@ import datetime
 import json
 import re
 import time
+import unicodedata
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import requests
@@ -36,6 +37,9 @@ SKIP_TYPES = {"start", "end", "today", "deviceid", "username", "phonenumber", "s
 # "Other, please specify" boxes that follow an option: not questions of their own
 SPECIFY_RE = re.compile(r"specif|^\W*(tjet[eë]r|t[eë] tjer[eë]|other|ostalo|drugo)\b|navedi|write in|shëno sa|"
                         r"shëno shum", re.IGNORECASE)
+# "1st choice", "Second choice" …: the places of a ranking built as separate questions after a note
+CHOICE_RE = re.compile(r"(^|\s)((\d+\s*(st|nd|rd|th))|first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|"
+                       r"tenth)\s+(choice|option|mention)$|^zgjedhja e \w+$|^(prvi|drugi|treci|cetvrti|peti) izbor$")
 # rows of a matrix / ranking repeat across matrices; they are kept as they are
 ROW_TYPES = {"score__row", "rank__level"}
 MIN_QUESTIONS = 3        # forms with fewer questions are tests or empty drafts
@@ -79,8 +83,9 @@ CATALOG_COLUMNS = ["id", "titulli", "perdorshem", "industria", "lloji", "metodol
                    "kategorizuar"]
 CATEGORY_COLUMNS = ["perdorshem", "industria", "lloji", "metodologjite", "temat", "klienti", "pershkrimi",
                     "kategorizuar"]
-QUESTION_COLUMNS = ["pyetesori_id", "nr", "emri", "lloji", "grupi", "teksti", "opsionet", "rreshtat", "udhezimi",
-                    "perkthimet"]
+QUESTION_COLUMNS = ["pyetesori_id", "nr", "emri", "lloji", "grupi", "teksti", "opsionet", "rreshtat", "pyetja_unike",
+                    "udhezimi", "perkthimet"]
+SIMILAR_QUESTION = 0.85  # text similarity (letter trigrams) above which two questions count as one unique question
 
 
 class BankError(Exception):
@@ -156,6 +161,8 @@ def _staff_question(label, list_name, name):
     if list_name and STAFF_RE.search(str(list_name)):
         return True
     texts = list(label.values()) + [str(name or "").replace("_", " ")]
+    if any(STAFF_RE.search(t) and len(t.strip()) <= 30 for t in label.values()):   # "Anketuesi/ja:"
+        return True
     return any(STAFF_RE.search(t) and IDENTITY_RE.search(t) for t in texts)
 
 
@@ -216,6 +223,15 @@ def parse_content(content):
             continue
         if base == "text" and len(text) < 70 and SPECIFY_RE.search(text):
             continue
+        if base == "select_one" and CHOICE_RE.search(" ".join(re.sub(r"[^\w\s]|_", " ", text.lower()).split())):
+            # a place of a ranking: the ranking is one question, its text the note above it
+            if matrix is not None and matrix["type"] == "rank" and matrix.get("list") == list_name:
+                matrix["items"].append(text)
+                continue
+            if questions and questions[-1]["type"] == "note":
+                matrix = questions[-1]
+                matrix.update(type="rank", options=options, items=[text], list=list_name)
+                continue
         if inside == "table" and base in ("select_one", "select_multiple"):
             if matrix is not None and matrix.get("list") == list_name:
                 matrix["items"].append(text)
@@ -461,6 +477,55 @@ def _question_rows(form):
     return rows
 
 
+QUESTION_PREFIX = re.compile(r"^\s*(\(?[a-zA-Z]{0,3}\d+[a-zA-Z]?(\.\d+)*[a-zA-Z]?\)?[.):\-–]?\s+|"
+                             r"\([a-zA-Z]{0,3}\d+[a-z]?\)\s*)+")
+
+
+def _question_key(text):
+    """A question's text for comparing: without its number ("Q14.", "P8.3"), Kobo references, accents,
+    punctuation and case."""
+    text = QUESTION_PREFIX.sub("", re.sub(r"\$\{[^}]*\}", " ", text or ""))
+    text = "".join(c for c in unicodedata.normalize("NFKD", text.lower()) if not unicodedata.combining(c))
+    return " ".join(re.sub(r"[^\w\s]|_", " ", text).split())
+
+
+def mark_unique(rows):
+    """Sets "pyetja_unike" on the question rows: one id per group of questions with the same or a very similar
+    text (letter-trigram cosine >= SIMILAR_QUESTION), e.g. "Mosha (vjet)" and "Mosha:", or one question asked
+    about different politicians or periods. Notes get no id."""
+    import numpy as np
+    from scipy import sparse
+
+    keys = [_question_key(r["teksti"]) if r["lloji"] != "note" else "" for r in rows]
+    texts = sorted({k for k in keys if k})
+    index = {k: i for i, k in enumerate(texts)}
+    vocab, cells_r, cells_c = {}, [], []
+    for i, k in enumerate(texts):
+        padded = f"  {k}  "
+        for gram in {padded[j:j + 3] for j in range(len(padded) - 2)}:
+            cells_r.append(i)
+            cells_c.append(vocab.setdefault(gram, len(vocab)))
+    parent = list(range(len(texts)))
+
+    def find(a):
+        while parent[a] != a:
+            parent[a] = parent[parent[a]]
+            a = parent[a]
+        return a
+
+    if texts:
+        x = sparse.csr_matrix((np.ones(len(cells_r), dtype=np.float32), (cells_r, cells_c)),
+                              shape=(len(texts), len(vocab)))
+        x = sparse.diags(1 / np.sqrt(np.asarray(x.sum(1)).ravel())) @ x
+        for start in range(0, len(texts), 2000):
+            sim = (x[start:start + 2000] @ x.T).tocoo()
+            keep = (sim.data >= SIMILAR_QUESTION) & (sim.row + start < sim.col)
+            for a, b in zip(sim.row[keep] + start, sim.col[keep]):
+                parent[find(a)] = find(b)
+    for row, key in zip(rows, keys):
+        row["pyetja_unike"] = f"U{find(index[key]) + 1}" if key else ""
+
+
 def _cached_loader():
     import streamlit as st
 
@@ -512,6 +577,7 @@ def load_bank(secrets):
         questions.setdefault(r["pyetesori_id"], []).append({
             "nr": r.get("nr", ""), "name": r.get("emri", ""), "type": r.get("lloji", ""),
             "group": r.get("grupi", ""), "text": r.get("teksti", ""), "options": options, "items": items,
+            "unique": r.get("pyetja_unike", ""),
             "hint": r.get("udhezimi", ""),
         })
     return catalog, questions
@@ -574,6 +640,8 @@ def sync(secrets, client=None, model=None, recategorize=False, progress=None):
         question_rows += [r for r in _read(sh, QUESTIONS_SHEET, QUESTION_COLUMNS) if r["pyetesori_id"] in kept_ids]
 
     progress(1.0, "Po ruhen pyetjet në Google Sheet...")
+    progress(1.0, "Po krahasohen pyetjet për pyetjet unike...")
+    mark_unique(question_rows)
     _write(sh, QUESTIONS_SHEET, QUESTION_COLUMNS, question_rows)
     _write(sh, CATALOG_SHEET, CATALOG_COLUMNS, catalog)
     stats["questions"] = len(question_rows)

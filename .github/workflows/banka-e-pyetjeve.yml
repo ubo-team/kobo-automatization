@@ -29,7 +29,7 @@ jobs:
         with:
           python-version: "3.13"
       - name: Instalo paketat
-        run: pip install requests gspread google-auth "anthropic>=1.7" openpyxl pandas python-docx docx2python
+        run: pip install requests gspread google-auth "anthropic>=1.7" openpyxl pandas python-docx docx2python numpy scipy
       - name: Përditëso bankën
         env:
           UBO_SECRETS: ${{ secrets.UBO_SECRETS }}

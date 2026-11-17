@@ -62,11 +62,14 @@ with ubo_ui.card("", key="banka"):     # the page header already says what it is
     for col in ("nr_pyetjeve", "dergesat", "kopjet"):
         df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0).astype(int)
 
-    m1, m2, m3, m4, upd = st.columns([1, 1, 1, 1, 1.4], vertical_alignment="center")
+    m1, m2, m3, m4, m5, upd = st.columns([1, 1, 1, 1, 1, 1.4], vertical_alignment="center")
     m1.metric("Pyetësorë", f"{len(df):,}")
     m2.metric("Pyetje", f"{sum(q['type'] != 'note' for v in questions.values() for q in v):,}")
-    m3.metric("Industri", df["industria"].replace("", pd.NA).nunique())
-    m4.metric("Lloje studimi", df["lloji"].replace("", pd.NA).nunique())
+    m3.metric("Pyetje unike", f"{len({q['unique'] for v in questions.values() for q in v if q.get('unique')}):,}",
+              help="Pyetjet me tekst të njëjtë ose shumë të ngjashëm numërohen një herë, p.sh. \"Ju lutem komentoni\" "
+                   "dhe \"Ju lutemi komentoni:\", ose e njëjta pyetje për politikanë apo periudha të ndryshme.")
+    m4.metric("Industri", df["industria"].replace("", pd.NA).nunique())
+    m5.metric("Lloje studimi", df["lloji"].replace("", pd.NA).nunique())
     with upd:
         clicked = st.button("Përditëso bankën", type="primary", icon=":material/refresh:", width="stretch")
         last = qb.cached_last_sync()
