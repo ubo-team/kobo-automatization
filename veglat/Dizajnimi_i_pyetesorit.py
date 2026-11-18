@@ -55,7 +55,7 @@ def show_design_progress(bar, text, target):
     n = text.count('"section"')
     if n == 0:
         label = ("Agjenti AI po shkruan titullin dhe hyrjen..." if '"title"' in text else
-                 "Agjenti AI po lexon pyetjet e bankës dhe po planifikon pyetësorin...")
+                 "Agjenti AI po lexon pyetjet e bankës dhe po planifikon rrjedhën e pyetësorit (disa minuta)...")
         bar.progress(0.03 if text else 0.0, text=label)
         return
     if '"notes"' in text:
@@ -152,7 +152,7 @@ with ubo_ui.card("Pyetësorët burim nga banka", step=2,
 
     if st.button("Dizajno pyetësorin", type="primary", disabled=not (selected and brief["objectives"])):
         context, sources = qd.bank_context([rows_by_id[i] for i in selected], bank_questions)
-        bar = st.progress(0.0, text="Agjenti AI po lexon pyetjet e bankës dhe po planifikon pyetësorin...")
+        bar = st.progress(0.0, text="Agjenti AI po lexon pyetjet e bankës dhe po planifikon rrjedhën e pyetësorit (disa minuta)...")
         try:
             result, ok = run(qd.design, client, model, brief, context, sources,
                              on_text=lambda text: show_design_progress(bar, text, brief["n_questions"]))
@@ -186,6 +186,14 @@ if questionnaire:
         q, cost = result
         add_cost(cost)
         q["uid"] = new_uid()        # new fields for the new text
+        codes = {x.get("code") for x in questionnaire["questions"]}
+        if not new and questionnaire["questions"][index].get("code"):
+            q["code"] = questionnaire["questions"][index]["code"]       # filters elsewhere refer to it
+        elif not q.get("code") or q["code"] in codes:
+            n = 1
+            while f"Q{n}" in codes:
+                n += 1
+            q["code"] = f"Q{n}"
         if new:
             questionnaire["questions"].insert(index + 1, q)
         else:
@@ -212,6 +220,8 @@ if questionnaire:
                             padding: 14px 16px 10px !important; margin-top: 2px; }
 .qd-num { display: grid; place-items: center; width: 34px; height: 34px; border-radius: 10px; margin-top: 2px;
           background: #22C6A0; color: #fff; font: 700 15px "Space Grotesk", system-ui, sans-serif; }
+.qd-code { text-align: center; margin-top: 4px; font: 600 11px "Inter", system-ui, sans-serif; color: #0B8F76; }
+.qd-filter { font: 600 13px "Inter", system-ui, sans-serif; color: #2560E6; margin: 0 0 6px; }
 .qd-sec { margin: 22px 0 4px; font: 700 13px "Inter", system-ui, sans-serif; letter-spacing: .1em;
           text-transform: uppercase; color: #0B8F76; border-bottom: 2px solid #22C6A022; padding-bottom: 6px; }
 [class*="st-key-qd_box_"] [data-testid="stTextArea"] textarea { font-size: 15px; }
@@ -224,7 +234,8 @@ if questionnaire:
             k = lambda field: f"qd_{q['uid']}_{field}"
             defaults = {"text": q["text"], "type": q["type"], "section": q["section"],
                         "options": qd.options_text(q["options"]), "items": "\n".join(q["items"]),
-                        "instruction": q["instruction"], "prompt": ""}
+                        "instruction": q["instruction"], "prompt": "", "code": q.get("code") or "",
+                        "filter": q.get("filter") or ""}
             for field, value in defaults.items():
                 if k(field) not in ss:
                     ss[k(field)] = value
@@ -234,9 +245,13 @@ if questionnaire:
 
             with st.container(border=True, key=f"qd_box_{q['uid']}"):
                 num, body, tools = st.columns([0.45, 10, 1.6], gap="small")
-                num.markdown(f'<div class="qd-num">{i + 1}</div>', unsafe_allow_html=True)
+                num.markdown(f'<div class="qd-num">{i + 1}</div><div class="qd-code">{html.escape(ss[k("code")])}</div>',
+                             unsafe_allow_html=True)
                 with body:
                     q["type"] = ss[k("type")]       # its selectbox comes later, under "Më shumë"
+                    if ss[k("filter")].strip():     # who is asked; edited under "Më shumë"
+                        st.markdown(f'<div class="qd-filter">↳ {html.escape(ss[k("filter")])}</div>',
+                                    unsafe_allow_html=True)
                     with st.container(key=f"qd_q_{q['uid']}"):
                         q["text"] = st.text_area("Pyetja", key=k("text"), height=68, label_visibility="collapsed")
                     if q["type"] in qd.ITEM_TYPES:
@@ -249,11 +264,16 @@ if questionnaire:
                         q["options"] = qd.parse_options(st.text_area(
                             "Opsionet (një për rresht)", key=k("options"),
                             height=min(max(68, 24 * lines + 26), 320)))
-                    with st.expander("Më shumë: lloji, seksioni, udhëzimi, burimi"):
-                        c_type, c_sec = st.columns(2)
+                    with st.expander("Më shumë: filtri, lloji, seksioni, udhëzimi, burimi"):
+                        q["filter"] = st.text_input(
+                            "Filtri (kujt i bëhet pyetja)", key=k("filter"),
+                            placeholder="Bosh: të gjithëve. P.sh. Pyet nëse S3 = 1 (Po)",
+                            help="Me kodet e pyetjeve (S1, Q4 …). Në Word kodet zëvendësohen me numrat e pyetjeve.")
+                        c_type, c_sec, c_code = st.columns([2, 2, 1])
                         q["type"] = c_type.selectbox("Lloji", list(qd.QUESTION_TYPES), key=k("type"),
                                                      format_func=qd.QUESTION_TYPES.get)
                         q["section"] = c_sec.text_input("Seksioni", key=k("section"))
+                        q["code"] = c_code.text_input("Kodi", key=k("code"))
                         q["instruction"] = st.text_input("Udhëzimi (për anketuesin / të anketuarin)",
                                                          key=k("instruction"))
                         if q.get("source"):

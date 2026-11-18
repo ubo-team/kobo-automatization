@@ -84,7 +84,7 @@ CATALOG_COLUMNS = ["id", "titulli", "perdorshem", "industria", "lloji", "metodol
 CATEGORY_COLUMNS = ["perdorshem", "industria", "lloji", "metodologjite", "temat", "klienti", "pershkrimi",
                     "kategorizuar"]
 QUESTION_COLUMNS = ["pyetesori_id", "nr", "emri", "lloji", "grupi", "teksti", "opsionet", "rreshtat", "pyetja_unike",
-                    "udhezimi", "perkthimet"]
+                    "filtri", "udhezimi", "perkthimet"]
 SIMILAR_QUESTION = 0.85  # text similarity (letter trigrams) above which two questions count as one unique question
 
 
@@ -184,11 +184,12 @@ def parse_content(content):
             title = next(iter(label.values()), row.get("name") or "")
             kind = ("kobomatrix" if rtype == "begin_kobomatrix" else
                     "table" if "table-list" in str(row.get("appearance") or "") else "")
-            groups.append({"title": title, "kind": kind})
+            groups.append({"title": title, "kind": kind, "relevant": _condition(row.get("relevant"))})
             matrix = None
             if kind == "kobomatrix":
                 rows = lists.get(row.get("kobo--matrix_list"), [])
                 matrix = _matrix(row, label, groups, [_main_text(o["label"]) for o in rows])
+                matrix["filter"] = _filter(groups)
                 questions.append(matrix)
             continue
         if rtype in GROUP_END:
@@ -238,6 +239,7 @@ def parse_content(content):
                 continue
             title = groups[-1]["title"]
             matrix = _matrix(row, {languages[0]: title} if title else label, groups, [text], options, list_name)
+            matrix["filter"] = _filter(groups)
             questions.append(matrix)
             continue
         matrix = None
@@ -245,6 +247,7 @@ def parse_content(content):
             matrix = _matrix(row, label, groups, [], options)
             matrix["type"] = "matrix" if base == "begin_score" else "rank"
             matrix["hint"] = _texts(row.get("hint"), languages)
+            matrix["filter"] = _filter(groups, row)
             questions.append(matrix)
             continue
         signature = (base, text.strip().lower(), tuple(o["code"] for o in options))
@@ -259,17 +262,33 @@ def parse_content(content):
             "hint": _texts(row.get("hint"), languages),
             "options": options,
             "items": [],
+            "filter": _filter(groups, row),
         })
     for q in questions:
         q.pop("list", None)
     return languages, [q for q in questions if q["type"] != "matrix" or q["items"]]
 
 
+def _condition(expression):
+    """A Kobo condition ("relevant") made readable: ${q2} = '1'  ->  q2 = '1'."""
+    text = re.sub(r"\$\{([^}]*)\}", r"\1", str(expression or ""))
+    return " ".join(text.split())[:300]
+
+
+def _filter(groups, row=None):
+    """When a question is asked: the conditions of its groups and its own, joined with "and"."""
+    parts = [g["relevant"] for g in groups if g.get("relevant")]
+    if row is not None and _condition(row.get("relevant")):
+        parts.append(_condition(row.get("relevant")))
+    return " and ".join(f"({p})" if len(parts) > 1 else p for p in parts)
+
+
 def _matrix(row, label, groups, items, options=(), list_name=None):
     return {"name": str(row.get("name") or row.get("$autoname") or ""), "type": "matrix",
             "group": " / ".join(g["title"] for g in groups[:-1] if g["title"]) if groups and groups[-1]["kind"]
             else " / ".join(g["title"] for g in groups if g["title"]),
-            "label": label, "hint": {}, "options": list(options), "items": list(items), "list": list_name}
+            "label": label, "hint": {}, "options": list(options), "items": list(items), "list": list_name,
+            "filter": ""}
 
 
 def fetch_forms(account, server, token, progress=None):
@@ -454,10 +473,24 @@ def _read(sh, name, columns, upto=None):
 def _write(sh, name, columns, rows, chunk=5000):
     ws = _worksheet(sh, name, columns)
     values = [columns] + [[str(r.get(c, ""))[:CELL_LIMIT] for c in columns] for r in rows]
-    ws.clear()
-    ws.resize(rows=max(len(values), 2), cols=len(columns))
+    _retry(ws.clear)
+    _retry(lambda: ws.resize(rows=max(len(values), 2), cols=len(columns)))
     for start in range(0, len(values), chunk):
-        ws.update(values[start:start + chunk], f"A{start + 1}", value_input_option="RAW")
+        _retry(lambda: ws.update(values[start:start + chunk], f"A{start + 1}", value_input_option="RAW"))
+
+
+def _retry(call, attempts=5):
+    """A Google Sheets request, tried again after a dropped connection or a busy server (429 / 5xx), so that a
+    long write does not stop half way."""
+    import gspread
+    for attempt in range(attempts):
+        try:
+            return call()
+        except (requests.RequestException, gspread.exceptions.APIError) as e:
+            status = getattr(getattr(e, "response", None), "status_code", None)
+            if attempt == attempts - 1 or (status is not None and status != 429 and status < 500):
+                raise
+            time.sleep(5 * 2 ** attempt)
 
 
 def _question_rows(form):
@@ -469,6 +502,7 @@ def _question_rows(form):
             "opsionet": json.dumps([[o["code"], _main_text(o["label"])] for o in q["options"]], ensure_ascii=False)
             if q["options"] else "",
             "rreshtat": json.dumps(q.get("items") or [], ensure_ascii=False) if q.get("items") else "",
+            "filtri": q.get("filter", ""),
             "udhezimi": _main_text(q["hint"]),
             "perkthimet": json.dumps({"label": q["label"], "hint": q["hint"],
                                       "options": [o["label"] for o in q["options"]]}, ensure_ascii=False)
@@ -577,7 +611,7 @@ def load_bank(secrets):
         questions.setdefault(r["pyetesori_id"], []).append({
             "nr": r.get("nr", ""), "name": r.get("emri", ""), "type": r.get("lloji", ""),
             "group": r.get("grupi", ""), "text": r.get("teksti", ""), "options": options, "items": items,
-            "unique": r.get("pyetja_unike", ""),
+            "unique": r.get("pyetja_unike", ""), "filter": r.get("filtri", ""),
             "hint": r.get("udhezimi", ""),
         })
     return catalog, questions
