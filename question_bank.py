@@ -1,6 +1,7 @@
-"""Question bank: the questionnaires of past studies, taken from the KoboToolbox accounts.
+"""Question bank: the questionnaires of past studies, taken from the KoboToolbox accounts and the Panel.
 
 - fetch_forms(): every questionnaire (survey and template) of one account, with its questions and options,
+- fetch_panel(): the Panel's questionnaires and questions, from its two JSON links,
 - dedupe(): merges copies, the same questionnaire in two accounts or a copy with small changes (a new wave),
 - categorize(): Claude sets the industry, the kind of study, the methodologies and the topics,
 - the bank is kept in a private Google Sheet ("Pyetesoret" and "Pyetjet"), never in the repository (it is
@@ -11,6 +12,9 @@ Secrets:
     [kobo_accounts.ubo]                                # one section per account; the name is free
     server = "https://kf.kobotoolbox.org"              # or https://eu.kobotoolbox.org
     token = "<API token: Account Settings -> Security>"
+    [panel_sources.ks]                                 # optional, one section per Panel (market)
+    surveys = "https://admin.uboconsulting-ks.com/QuestionBank/Surveys?secret=…"
+    questions = "https://admin.uboconsulting-ks.com/QuestionBank/Questions?secret=…"
 
 Runs from the "Banka e pyetjeve" page, or from a terminal: py -m question_bank
 """
@@ -323,6 +327,98 @@ def fetch_forms(account, server, token, progress=None):
 
 
 # ---------------------------------------------------------------------------
+# Panel
+# ---------------------------------------------------------------------------
+
+# The Panel's question types -> the bank's (Kobo's); photos, videos, files and calculations are not questions
+PANEL_TYPES = {"matrix_select_one": "matrix", "matrix_select_multiple": "matrix", "matrix_text": "matrix",
+               "matrix_side_by_side": "matrix"}
+PANEL_LANGUAGES = {"sq": "Shqip (sq)", "en": "English (en)", "sr": "Srpski (sr)"}
+
+
+def panel_sources(secrets):
+    """{name: (surveys URL, questions URL)} from the [panel_sources.<name>] sections of the secrets."""
+    try:
+        sections = dict(secrets["panel_sources"])
+    except Exception:
+        return {}
+    sources = {}
+    for name, src in sections.items():
+        if not (src.get("surveys") and src.get("questions")):
+            raise BankError(f"Panelit `{name}` i mungon lidhja `surveys` ose `questions` te secrets.")
+        sources[name] = (str(src["surveys"]).strip(), str(src["questions"]).strip())
+    return sources
+
+
+def _get_json(url, key):
+    """A list from the Panel's JSON (its "pyetesoret" / "pyetjet"); the URL is never shown (it has the secret)."""
+    for attempt in range(3):
+        try:
+            r = requests.get(url, timeout=120)
+            if r.status_code in (429, 500, 502, 503, 504) and attempt < 2:
+                time.sleep(2 * (attempt + 1))
+                continue
+            if r.status_code in (401, 403):
+                raise BankError("Paneli nuk e pranon lidhjen (secret i pavlefshëm).")
+            r.raise_for_status()
+            data = r.json()
+            break
+        except (requests.RequestException, ValueError):
+            if attempt == 2:
+                raise BankError("Paneli nuk u arrit ose ktheu të dhëna të pavlefshme.")
+            time.sleep(2 * (attempt + 1))
+    if not isinstance(data, dict) or not isinstance(data.get(key), list):
+        raise BankError("Paneli ktheu të dhëna në një formë të panjohur.")
+    return data[key]
+
+
+def _panel_question(q, languages):
+    """A Panel question as a bank question (the form fetch_forms gives), or None when it is not a question."""
+    kind = PANEL_TYPES.get(q.get("lloji"), q.get("lloji"))
+    text = _clean(q.get("teksti") or "")
+    if not kind or kind in SKIP_TYPES or not text:
+        return None
+    label, hint = {languages[0]: text}, {}
+    if q.get("udhezimi"):
+        hint[languages[0]] = _clean(q["udhezimi"])
+    for code, tr in (q.get("perkthimet") or {}).items():       # only real translations, not copies of the text
+        lang = PANEL_LANGUAGES.get(code, code)
+        if lang in languages and tr.get("teksti") and _clean(tr["teksti"]) != text:
+            label[lang] = _clean(tr["teksti"])
+            if tr.get("udhezimi"):
+                hint[lang] = _clean(tr["udhezimi"])
+    options = [{"code": str(c), "label": {languages[0]: _clean(l)}} for c, l in q.get("opsionet") or []]
+    items = [_clean(r[1] if isinstance(r, (list, tuple)) else r) for r in q.get("rreshtat") or []]
+    if kind == "rank" and not items:           # a ranking lists its elements as options
+        items, options = [_main_text(o["label"]) for o in options], []
+    return {"name": str(q.get("emri") or ""), "type": kind, "group": _clean(q.get("grupi") or ""),
+            "label": label, "hint": hint, "options": options, "items": items,
+            "filter": _clean(q.get("filtri") or "")}
+
+
+def fetch_panel(name, surveys_url, questions_url):
+    """Every questionnaire of one Panel as a dict with its questions, like fetch_forms."""
+    surveys = _get_json(surveys_url, "pyetesoret")
+    by_survey = {}
+    for q in sorted(_get_json(questions_url, "pyetjet"), key=lambda q: int(q.get("nr") or 0)):
+        by_survey.setdefault(q.get("pyetesori_id"), []).append(q)
+    forms = []
+    for s in surveys:
+        codes = re.findall(r"\((\w+)\)", s.get("gjuhet") or "") or ["sq"]
+        languages = [PANEL_LANGUAGES.get(c, c) for c in codes]
+        questions = [x for x in (_panel_question(q, languages) for q in by_survey.get(s["id"], [])) if x]
+        forms.append({
+            "id": s["id"],
+            "title": _clean(s.get("titulli") or "") or s["id"],
+            "date_modified": (s.get("perditesuar") or s.get("krijuar") or "")[:10],
+            "submissions": int(s.get("dergesat") or 0),
+            "languages": languages,
+            "questions": questions,
+        })
+    return forms
+
+
+# ---------------------------------------------------------------------------
 # Duplicates
 # ---------------------------------------------------------------------------
 
@@ -560,21 +656,27 @@ def mark_unique(rows):
         row["pyetja_unike"] = f"U{find(index[key]) + 1}" if key else ""
 
 
+# The bank changes only with "Përditëso bankën" (which clears the cache at once) and the monthly update, so the
+# pages keep it for a day; reading it from the Google Sheet takes ~8 s. Hand edits in the sheet and the monthly
+# update show up within a day.
+BANK_CACHE_SECONDS = 24 * 3600
+
+
 def _cached_loader():
     import streamlit as st
 
     # ubo_ui's page script hides its "Ju lutem prisni pak" window while this spinner shows (matched on its text)
-    @st.cache_data(ttl=600, show_spinner="Po lexohet banka e pyetjeve...")
+    @st.cache_data(ttl=BANK_CACHE_SECONDS, show_spinner="Po lexohet banka e pyetjeve...")
     def cached_bank():
         return load_bank(st.secrets)
 
-    @st.cache_data(ttl=600, show_spinner=False)
+    @st.cache_data(ttl=BANK_CACHE_SECONDS, show_spinner=False)
     def cached_last_sync():
         return last_sync(st.secrets)
     return cached_bank, cached_last_sync
 
 
-# load_bank / last_sync for the pages, kept for 10 minutes and shared by them (.clear() after a sync)
+# load_bank / last_sync for the pages, kept for a day and shared by them (.clear() after a sync)
 cached_bank, cached_last_sync = _cached_loader()
 
 
@@ -638,6 +740,17 @@ def sync(secrets, client=None, model=None, recategorize=False, progress=None):
         stats["accounts"][name] = len(account_forms)
         stats["failed"] += failed
         forms += account_forms
+    # the Panel: when it cannot be reached, its questionnaires stay in the bank as they were
+    stats["panel"], stats["panel_failed"] = {}, []
+    for name, (surveys_url, questions_url) in panel_sources(secrets).items():
+        progress(1.0, f"Paneli {name}: po merren pyetësorët...")
+        try:
+            panel_forms = fetch_panel(name, surveys_url, questions_url)
+        except BankError as e:
+            stats["panel_failed"].append(f"Paneli `{name}`: {e}")
+            continue
+        stats["panel"][name] = len(panel_forms)
+        forms += panel_forms
     stats["forms"] = len(forms)
 
     progress(1.0, "Po krahasohen pyetësorët për dyfishime...")
@@ -666,8 +779,12 @@ def sync(secrets, client=None, model=None, recategorize=False, progress=None):
 
     # Questionnaires Kobo did not return this time (a failed request) stay in the bank as they were
     failed = set(stats["failed"])
-    kept = [r for r in old_catalog
-            if failed & set((r.get("burimet") or "").split("; ")) and r["id"] not in {c["id"] for c in catalog}]
+
+    def not_fetched(row):
+        sources = (row.get("burimet") or row.get("id", "")).split("; ")
+        return bool(failed & set(sources)) or (stats["panel_failed"] and any(s.startswith("panel-") for s in sources))
+
+    kept = [r for r in old_catalog if not_fetched(r) and r["id"] not in {c["id"] for c in catalog}]
     if kept:
         kept_ids = {r["id"] for r in kept}
         catalog += kept
@@ -728,11 +845,13 @@ if __name__ == "__main__":
         print("Përditësimi dështoi:", type(e).__name__ if quiet else e)
         sys.exit(1)
     if quiet:
-        print(f"Llogari: {len(result['accounts'])} | pyetësorë nga Kobo: {result['forms']} | unikë: {result['unique']}"
+        print(f"Llogari: {len(result['accounts'])} | nga Paneli: {sum(result['panel'].values())}"
+              f" | Panele pa u arritur: {len(result['panel_failed'])}"
+              f" | pyetësorë gjithsej: {result['forms']} | unikë: {result['unique']}"
               f" | pyetje: {result['questions']} | të rinj për kategorizim: {result['todo']}"
               f" | u kategorizuan: {result['categorized']} | kosto: ${result['cost']:.2f}"
               f" | dështuan nga Kobo: {len(result['failed'])} | gabime Agjenti AI: {len(result['errors'])}")
     else:
         print("\n", json.dumps(result, ensure_ascii=False, indent=2))
-    if result["failed"] or result["errors"]:
+    if result["failed"] or result["errors"] or result["panel_failed"]:
         sys.exit(1)

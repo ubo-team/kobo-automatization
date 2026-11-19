@@ -16,6 +16,7 @@ from docx.oxml import parse_xml
 from docx.oxml.ns import nsdecls, qn
 from docx.shared import Pt, RGBColor
 
+import demographics as demo
 import questionnaire_ai as qai
 
 SELECT_EFFORT = "low"
@@ -57,9 +58,19 @@ DESIGN_SCHEMA = {
         "title": {"type": "string"},
         "introduction": {"type": "string"},
         "questions": {"type": "array", "items": QUESTION_SCHEMA},
+        # the instruction of each standard demographic question the user put at the start (who continues)
+        "screening": {"type": "array", "items": {
+            "type": "object", "properties": {"id": {"type": "string"}, "instruction": {"type": "string"}},
+            "required": ["id", "instruction"], "additionalProperties": False}},
+        # the standard demographic questions in the questionnaire's language, when it is not Albanian
+        "translations": {"type": "array", "items": {
+            "type": "object", "properties": {"id": {"type": "string"}, "text": {"type": "string"},
+                                             "options": {"type": "array", "items": {"type": "string"}},
+                                             "instruction": {"type": "string"}},
+            "required": ["id", "text", "options", "instruction"], "additionalProperties": False}},
         "notes": {"type": "array", "items": {"type": "string"}},
     },
-    "required": ["title", "introduction", "questions", "notes"],
+    "required": ["title", "introduction", "questions", "screening", "translations", "notes"],
     "additionalProperties": False,
 }
 SELECT_SCHEMA = {
@@ -94,10 +105,17 @@ def brief_text(brief):
             lines.append(f"{label}: {brief[key]}")
     if brief.get("methods"):
         lines.append(f"Methodologies to include: {', '.join(brief['methods'])}")
-    lines.append(f"Approximate number of questions: {brief['n_questions']}")
+    lines.append(f"Approximate number of questions, not counting the demographic questions: {brief['n_questions']}")
     lines.append(f"Language of the questionnaire: {LANGUAGES.get(brief['language'], brief['language'])}")
     if brief.get("mode"):
         lines.append(f"Data collection: {MODES.get(brief['mode'], brief['mode'])}")
+    if "demographics" in brief:
+        start = demo.with_required(brief.get("demographics_start") or [])
+        end = [qid for qid in demo.with_required(brief["demographics"]) if qid not in start]
+        lines.append("Standard demographic questions the user put at the start, to screen the target group "
+                     f"(added by the program): {', '.join(start) or 'none'}")
+        lines.append(f"Standard demographic questions ticked by the user (added by the program at the end): "
+                     f"{', '.join(end) or 'none'}")
     return "\n".join(lines)
 
 
@@ -174,15 +192,16 @@ RULES = """Rules:
 - Leave out the bank question's own number ("F2a.", "16.", "D4.") from `text`: the new questionnaire has its own codes.
 - Write a new question only when no bank question covers a need of the study; then leave `source` empty and say in `change`, in Albanian, why it is new.
 - The flow. A questionnaire is not a list of questions: it is a path through which every respondent is routed, and the bank shows how UBO builds it. In <bank> each question line is `[reference] variable (type) text … — ASKED IF: condition`, the condition in Kobo's notation over the variables of that questionnaire (e.g. `q2 = '1'`, `selected(q5, '3')`, `q7 >= 4`). Study how the past questionnaires route their respondents and build the new one the same way:
-  - screening first: the qualifying questions (age, residence, being a customer / user / voter …) with what happens to those who do not qualify ("END THE INTERVIEW" in `instruction`), and quotas when the target group needs them;
+  - screening first: the qualifying questions (being a customer / user / voter …) with what happens to those who do not qualify ("END THE INTERVIEW" in `instruction`), and quotas when the target group needs them;
   - funnels from general to specific: awareness (unaided, then aided) → use / experience → evaluation and satisfaction → loyalty / recommendation → intentions; each step asked only of those to whom it applies (only the users of a service rate it, only those aware of a brand say whether they use it);
   - follow-ups on answers: "why" / "what should change" after a low (or high) rating, "which" after a "yes", "other, specify" where the bank has it, the reasons for not using after a "no";
   - batteries per brand / service / institution asked only for those the respondent knows or uses, as the bank does;
-  - general and sensitive questions (income, voting, politics) late, demographics at the end; group the questions into sections with a short title in `section` (in the questionnaire's language).
-- `code`: a short variable for every question, unique in the questionnaire: S1, S2 … for screening, then Q1, Q2 … (D1, D2 … for demographics); notes get one too. Filters refer to these codes.
+  - general and sensitive questions (voting, politics) late; group the questions into sections with a short title in `section` (in the questionnaire's language).
+- `code`: a short variable for every question, unique in the questionnaire: S1, S2 … for screening, then Q1, Q2 …; notes get one too. Never use D codes: they belong to the standard demographic questions. Filters refer to these codes (and may refer to the D codes of the demographic questions the user put at the start).
 - `filter`: when the question is asked, written in the questionnaire's language with the codes and the answer codes and labels, e.g. "Pyet nëse S3 = 1 (Po)", "Pyet nëse Q4 = 1-3 (të pakënaqur)", "Pyet nëse Q2 ≠ 98", "Pyet për çdo bankë të zgjedhur te Q5"; "" when everyone is asked. Every question that only makes sense for some respondents has a filter: a good questionnaire has many, as the bank's questionnaires do (their share is given at the top of <bank>). A filter can only refer to earlier questions.
 - Typical routing to apply wherever it fits: a rating or satisfaction question is asked only of those who use / know what is rated; after a satisfaction or agreement scale, a "why" / "what should improve" for the low scores (and, when useful, what they like for the high ones); after NPS, the reason of the score (detractors 0-6, passives 7-8, promoters 9-10); "which / how often / since when" only after a "yes"; the reasons for not using or not doing after a "no"; questions about a main brand / provider only for those with more than one; questions on intentions (switching, buying) followed by the reasons for those who intend.
 - Check the flow before answering: walk through the questionnaire as a respondent who qualifies and uses everything, as one who does not use the main service, and as one who is dissatisfied; every question each of them reaches must make sense for them. Add the missing filters and follow-ups, and remove the questions nobody reaches.
+- Demographic questions are not yours to write: the program adds the company's standard demographic questions (listed in <standard_demographics>, their code is their id: D1, D2 …) that the user ticked, word for word, at the end, and those the user put at the start before your questions. Write no demographic question of your own (gender, age or year of birth, municipality, settlement, household size, marital status, children, ethnicity, education, occupation, employment, income, religion, diaspora …), not even from the bank, and do not count them in the number of questions.
 - Methodologies, when asked for; prefer the bank's versions of them:
   MaxDiff: one `maxdiff` question, the attributes in `items`, the instruction on choosing the most and least important in each set;
   price analysis (Van Westendorp): the four price questions (too cheap, a bargain, getting expensive, too expensive) as `numeric`;
@@ -198,9 +217,20 @@ RULES = """Rules:
   Adapt the bank's instructions to the mode (a bank question from a CAPI study used in CATI loses its SHOW CARD, and so on), and adapt the introduction and the screening the same way (an introduction read by the interviewer for CATI / CAPI, a welcome text for CAWI).
 - A matrix or battery counts as one question in the requested number."""
 
+DEMOGRAPHICS_RULES = """Standard demographic questions:
+- The ones the user put at the start screen the target group; the program asks them first. For each of them, give in `screening` its id and, in `instruction`, in the questionnaire's language, who continues and when the interview ends, from the target group and the objectives (e.g. "Vazhdo vetëm nëse është i/e punësuar në sektorin privat; përndryshe përfundo intervistën."); leave `instruction` empty when the target group puts no limit on that question. `screening` lists only those ids (empty when the user put none at the start). Your own screening questions, if the study needs any that are not demographic, go first among your questions as usual. When the target group is defined by a demographic characteristic that the user did not put at the start, say so in `notes`.
+- The conditions of the standard questions (in brackets in <standard_demographics>: asked only for some answers, or once per child) are added by the program; do not repeat them.
+- `translations`: only when the questionnaire's language is not Albanian, every standard question that is ticked or put at the start, translated: `text`, `options` (the labels only, in the same order and number as the standard list) and `instruction` (empty when the standard one is empty). Empty for an Albanian questionnaire."""
+
+
+def demographics_block():
+    return {"type": "text", "text": f"<standard_demographics>\n{demo.standard_text()}\n</standard_demographics>"}
+
 DESIGN_SYSTEM = f"""You design survey questionnaires for UBO Consulting, a market and social research company in Kosovo. You build them from the company's question bank: the questions of past questionnaires given in <bank>. The company wants its tested questions, not generic ones.
 
 {RULES}
+
+{DEMOGRAPHICS_RULES}
 
 Plan the questionnaire before writing it: the sections, the path of each kind of respondent through them, and the filters; then pick the bank questions for each step. Do not make it simpler than the past questionnaires of the same kind: match their depth (number of topics, follow-ups, batteries) within the requested number of questions.
 
@@ -232,16 +262,70 @@ def _question(data, sources):
     return q
 
 
+def _demographic_options(qid, translation=None):
+    """The options of a standard question, with the translated labels when there are as many as the codes."""
+    options = list(demo.BY_ID[qid]["options"])
+    labels = (translation or {}).get("options") or []
+    if len(labels) == len(options):
+        options = [(code, str(label)) for (code, _), label in zip(options, labels)]
+    return options
+
+
+def demographic_filter(qid, language="Shqip", translations=None):
+    """When a standard question is asked, in the questionnaire's language and with the codes of the
+    questionnaire ("Pyet nëse D4 = 2 (Rural)", "Pyet për çdo fëmijë sipas D10 …"); "" for everyone."""
+    std, texts = demo.BY_ID[qid], demo.ROUTING.get(language, demo.ROUTING["Shqip"])
+    if std["loop"]:
+        return texts["loop"].format(code=std["loop"])
+    if not std["ask_if"]:
+        return ""
+    parent, codes = std["ask_if"]
+    labels = dict(_demographic_options(parent, (translations or {}).get(parent)))
+    return texts["ask_if"].format(code=parent, answers=texts["or"].join(f"{c} ({labels.get(c, c)})" for c in codes))
+
+
+def _demographic_question(qid, section, translation=None, screening="", language="Shqip", translations=None):
+    """A standard demographic question for the editor, word for word (or in the questionnaire's language)."""
+    std = demo.BY_ID[qid]
+    text, instruction = std["text"], std["instruction"]
+    if translation:
+        text = translation.get("text") or text
+        instruction = translation.get("instruction", instruction)
+    return {"code": qid, "section": section, "filter": demographic_filter(qid, language, translations),
+            "text": text, "type": std["type"], "options": _demographic_options(qid, translation), "items": [],
+            "instruction": " ".join(x for x in (instruction, screening) if x), "source": "", "change": "",
+            "source_text": "Pyetje demografike standarde (Paneli)", "demographic": qid}
+
+
+def add_demographics(questions, data, brief):
+    """The questionnaire's questions with the standard demographics: those the user put at the start first
+    (with the AI agent's instruction on who continues), the other ticked ones (and those they depend on) at
+    the end."""
+    language = brief.get("language", "Shqip")
+    translations = {t.get("id"): t for t in data.get("translations") or []} if language != "Shqip" else {}
+    screening = {s.get("id"): s.get("instruction", "") for s in data.get("screening") or []}
+    start_ids = demo.with_required(brief.get("demographics_start") or [])
+    start = [_demographic_question(qid, demo.SCREENING_SECTION.get(language, demo.SCREENING_SECTION["Shqip"]),
+                                   translations.get(qid), screening.get(qid, ""), language, translations)
+             for qid in start_ids]
+    end = [_demographic_question(qid, demo.SECTION.get(language, demo.SECTION["Shqip"]), translations.get(qid),
+                                 "", language, translations)
+           for qid in demo.with_required(brief.get("demographics") or []) if qid not in start_ids]
+    return start + questions + end
+
+
 def design(client, model, brief, context, sources):
     """The new questionnaire {"title", "introduction", "questions", "notes"}, and the cost."""
-    content = [_bank_block(context), {"type": "text", "text": brief_text(brief)}]
+    content = [_bank_block(context), demographics_block(), {"type": "text", "text": brief_text(brief)}]
     data, usage = qai._call_claude(client, DESIGN_SYSTEM, content, DESIGN_SCHEMA, max_tokens=64000,
                                    effort=DESIGN_EFFORT, model=model)
     if not data.get("questions"):
         raise qai.AIError("Agjenti AI nuk ktheu pyetje. Provo përsëri ose shto më shumë detaje te objektivat.")
+    questions = [_question(q, sources) for q in data["questions"]]
+    if "demographics" in brief:
+        questions = add_demographics(questions, data, brief)
     questionnaire = {"title": data.get("title", ""), "introduction": data.get("introduction", ""),
-                     "notes": data.get("notes") or [],
-                     "questions": [_question(q, sources) for q in data["questions"]]}
+                     "notes": data.get("notes") or [], "questions": questions}
     return questionnaire, qai.estimate_cost(usage, model)
 
 
@@ -273,6 +357,7 @@ def regenerate_question(client, model, brief, context, sources, questionnaire, i
         mark = index
     content = [
         _bank_block(context),
+        demographics_block(),
         {"type": "text", "text": f"{brief_text(brief)}\n\nThe questionnaire so far:\n{outline(questionnaire, mark)}"
                                  f"\n\n{task}\nThe user's instruction: {instruction or 'write a better version'}"},
     ]

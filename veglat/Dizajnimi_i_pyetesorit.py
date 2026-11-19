@@ -4,6 +4,7 @@ import re
 
 import streamlit as st
 
+import demographics as demo
 import question_bank as qb
 import questionnaire_ai as qai
 import questionnaire_design as qd
@@ -29,6 +30,58 @@ if not usable:
     st.info("Banka e pyetjeve është bosh: plotësojeni fillimisht te vegla **Banka e pyetjeve**.")
     st.stop()
 rows_by_id = {r["id"]: r for r in catalog}
+
+
+def set_demographics(ids):
+    """Ticks exactly these standard demographic questions (the buttons above the checkboxes); with none,
+    nothing stays at the start either."""
+    for q in demo.STANDARD:
+        ss[f"qd_demo_{q['id']}"] = q["id"] in ids
+    if not ids:
+        ss["qd_demo_start"] = []
+
+
+def tick_start():
+    """The questions put at the start are in the questionnaire too, with those they depend on: ticks them."""
+    for qid in demo.with_required(ss.get("qd_demo_start") or []):
+        ss[f"qd_demo_{qid}"] = True
+
+
+# the badge beside a step's title: optional / required
+st.markdown("""<style>
+.qd-badge { display: inline-block; margin-left: 10px; padding: 2px 10px; border-radius: 999px; vertical-align: 3px;
+            font: 600 12px "Inter", system-ui, sans-serif; letter-spacing: .02em; }
+.qd-badge.opt { background: #E8ECF3; color: #4B5563; }
+.qd-badge.req { background: #FDE8E8; color: #B42318; }
+.qd-demo-head { margin: 14px 0 12px !important; padding-bottom: 8px; border-bottom: 2px solid #22C6A033;
+                font: 700 12px "Inter", system-ui, sans-serif; letter-spacing: .08em; text-transform: uppercase;
+                color: #0B8F76; }
+[class*="st-key-qd_demo_group_"] { gap: 10px !important; }
+.st-key-qd_demo_tools { margin-top: -66px; margin-bottom: 18px; }
+.st-key-qd_demo_tools button { min-height: 34px; padding: 4px 14px; border-radius: 999px; cursor: pointer;
+                               border: 1px solid #22C6A0; color: #0B8F76; background: #fff; }
+.st-key-qd_demo_tools button p { font-size: 13px; font-weight: 600; }
+.st-key-qd_demo_tools button:hover { background: #E8FAF5; border-color: #0B8F76; color: #0B8F76; }
+.st-key-qd_demo_tools button[kind="primary"], .st-key-qd_demo_tools button[data-testid="stBaseButton-primary"] {
+    background: #0B8F76; border-color: #0B8F76; color: #fff; box-shadow: 0 2px 8px rgba(11, 143, 118, .3); }
+.st-key-qd_demo_tools button[data-testid="stBaseButton-primary"] p { color: #fff; }
+[class*="st-key-qd_demo_group_"] [data-testid="stCheckbox"] label { width: 100%; padding: 4px 5px !important; }
+[class*="st-key-qd_demo_group_"] [data-testid="stCheckbox"] p { font-size: 12.5px; white-space: nowrap; }
+[class*="st-key-qd_demo_group_"] [data-testid="stCheckbox"], [class*="st-key-qd_demo_group_"] [class*="st-key-qd_demo_D"] { width: 100% !important; }
+.st-key-qd_design_go { margin: 8px 0 18px; }
+.st-key-qd_design_go button { min-height: 64px; border-radius: 14px; border: none;
+                              background: linear-gradient(90deg, #0B8F76, #22C6A0);
+                              box-shadow: 0 6px 18px rgba(34, 198, 160, .35); }
+.st-key-qd_design_go button p { font-size: 20px; font-weight: 700; }
+.st-key-qd_design_go button [data-testid="stIconMaterial"] { font-size: 26px; }
+.st-key-qd_design_go button:hover:not(:disabled) { filter: brightness(1.06); box-shadow: 0 8px 22px rgba(34, 198, 160, .45); }
+.st-key-qd_design_go button:disabled { background: linear-gradient(90deg, #0B8F76, #22C6A0); opacity: .65;
+                                       box-shadow: none; }
+.st-key-qd_design_go button:disabled p, .st-key-qd_design_go button:disabled [data-testid="stIconMaterial"] {
+    color: #fff; }
+</style>""", unsafe_allow_html=True)
+OPTIONAL = '<span class="qd-badge opt">Opsional</span>'
+REQUIRED = '<span class="qd-badge req">I detyrueshëm</span>'
 
 
 def add_cost(cost):
@@ -78,7 +131,9 @@ def show_design_progress(bar, text, target):
 # 1. The study
 # ---------------------------------------------------------------------------
 
-with ubo_ui.card("Studimi", step=1, subtitle="Pyetësori ndërtohet nga pyetjet e pyetësorëve të kaluar në bankë."):
+with ubo_ui.card(f"Studimi {OPTIONAL}", step=1, key="studimi",
+                 subtitle="Plotësojeni që Agjenti AI t'i gjejë vetë pyetësorët e ngjashëm në bankë dhe ta njohë "
+                          "studimin. Mund ta kaloni: zgjidhni pyetësorët dhe shkruani udhëzimin te hapi 2."):
     objectives = st.text_area("Objektivat e studimit", key="qd_objectives", height=130,
                               placeholder="P.sh. Matja e kënaqshmërisë së klientëve të bankave me shërbimet në "
                                           "degë dhe ato digjitale, arsyet e ndërrimit të bankës, NPS...")
@@ -90,7 +145,8 @@ with ubo_ui.card("Studimi", step=1, subtitle="Pyetësori ndërtohet nga pyetjet 
                                placeholder="Zgjidhni llojin")
     methods = c3.multiselect("Metodologji e veçantë", qb.METHODS, key="qd_methods", placeholder="Asnjë")
     c4, c5, c6, c7 = st.columns(4)
-    n_questions = c4.number_input("Numri i përafërt i pyetjeve", 5, 200, 30, step=5, key="qd_n")
+    n_questions = c4.number_input("Numri i përafërt i pyetjeve", 5, 200, 30, step=5, key="qd_n",
+                                  help="Pa pyetjet demografike: ato zgjidhen te hapi 3 dhe shtohen veç.")
     language = c5.selectbox("Gjuha e pyetësorit", list(qd.LANGUAGES), key="qd_language")
     mode = c6.selectbox("Mbledhja e të dhënave", list(qd.MODES), index=None, key="qd_mode",
                         placeholder="CATI, CAPI apo CAWI", help="Udhëzimet e pyetjeve, hyrja dhe shënimet "
@@ -98,6 +154,7 @@ with ubo_ui.card("Studimi", step=1, subtitle="Pyetësori ndërtohet nga pyetjet 
     audience = c7.text_input("Grupi i synuar", key="qd_audience", placeholder="P.sh. klientë të bankave 18+")
     notes = st.text_area("Kërkesa të tjera (opsionale)", key="qd_notes", height=70,
                          placeholder="P.sh. intervistë telefonike deri në 15 minuta; pa pyetje për të ardhurat")
+
     brief = {"objectives": objectives.strip(), "industry": industry or "", "survey_type": survey_type or "",
              "methods": methods, "n_questions": n_questions, "language": language, "audience": audience.strip(),
              "notes": notes.strip(), "mode": mode or ""}
@@ -105,7 +162,7 @@ with ubo_ui.card("Studimi", step=1, subtitle="Pyetësori ndërtohet nga pyetjet 
                                         ("llojin e studimit", survey_type), ("mbledhjen e të dhënave", mode))
                if not value]
     if missing:
-        st.caption("Plotësoni " + ", ".join(missing) + " për të vazhduar.")
+        st.caption("Që Agjenti AI të gjejë pyetësorët e ngjashëm, plotësoni " + ", ".join(missing) + ".")
 
     if st.button("Gjej pyetësorët e ngjashëm", type="primary", disabled=bool(missing)):
         with st.spinner("Agjenti AI po kërkon pyetësorët më të përshtatshëm..."):
@@ -122,8 +179,9 @@ with ubo_ui.card("Studimi", step=1, subtitle="Pyetësori ndërtohet nga pyetjet 
 # 2. Source questionnaires
 # ---------------------------------------------------------------------------
 
-with ubo_ui.card("Pyetësorët burim nga banka", step=2,
-                 subtitle=f"Pyetjet e tyre (deri në {qd.MAX_SOURCES} pyetësorë) janë materiali i pyetësorit të ri."):
+with ubo_ui.card(f"Pyetësorët burim nga banka {REQUIRED}", step=2, key="burimet",
+                 subtitle=f"Zgjidhni të paktën një pyetësor (deri në {qd.MAX_SOURCES}): pyetjet e tyre janë "
+                          "materiali i pyetësorit të ri."):
     def label(qid):
         r = rows_by_id[qid]
         return f"{r['titulli']} · {r.get('industria') or '–'} · {r.get('lloji') or '–'} · {r.get('nr_pyetjeve')} pyetje"
@@ -147,25 +205,96 @@ with ubo_ui.card("Pyetësorët burim nga banka", step=2,
             brief["notes"] = "\n".join(x for x in (brief["notes"], prompt.strip()) if x)
         else:
             brief["objectives"] = prompt.strip()
-    if selected and not brief["objectives"]:
+    if not selected:
+        st.caption("Zgjidhni të paktën një pyetësor burim.")
+    elif not brief["objectives"]:
         st.caption("Shkruani udhëzimin për Agjentin AI ose plotësoni objektivat te hapi 1.")
 
-    if st.button("Dizajno pyetësorin", type="primary", disabled=not (selected and brief["objectives"])):
-        context, sources = qd.bank_context([rows_by_id[i] for i in selected], bank_questions)
-        bar = st.progress(0.0, text="Agjenti AI po lexon pyetjet e bankës dhe po planifikon rrjedhën e pyetësorit (disa minuta)...")
-        try:
-            result, ok = run(qd.design, client, model, brief, context, sources,
-                             on_text=lambda text: show_design_progress(bar, text, brief["n_questions"]))
-        finally:
-            bar.empty()
-        if ok:
-            questionnaire, cost = result
-            add_cost(cost)
-            for q in questionnaire["questions"]:
-                ss["qd_next"] = ss.get("qd_next", 0) + 1
-                q["uid"] = ss["qd_next"]
-            ss.update(qd_q=questionnaire, qd_context=context, qd_sources=sources, qd_brief=brief,
-                      qd_title=questionnaire["title"], qd_intro=questionnaire["introduction"])
+# ---------------------------------------------------------------------------
+# 3. The standard demographic questions (as in the Panel): added word for word, not counted
+# ---------------------------------------------------------------------------
+
+for q in demo.STANDARD:
+    ss.setdefault(f"qd_demo_{q['id']}", q["default"])
+ss.setdefault("qd_demo_start", [])
+ticked = set(demo.with_required([q["id"] for q in demo.STANDARD if ss[f"qd_demo_{q['id']}"]]
+                                + ss["qd_demo_start"]))
+n_ticked = len(ticked)
+with ubo_ui.card(f"Pyetjet demografike {OPTIONAL}", step=3, key="demografike",
+                 subtitle=f"{n_ticked} të zgjedhura. Shtohen ashtu siç janë në Panel, në fund të pyetësorit, dhe "
+                          "nuk hyjnë te numri i pyetjeve."):
+    # top right, beside the title: the one that matches the ticks now is filled (active)
+    all_ids = [q["id"] for q in demo.STANDARD]
+    with st.container(horizontal=True, horizontal_alignment="right", gap="small", key="qd_demo_tools"):
+        for label, ids, icon, tip in (
+                ("Standardet", demo.DEFAULT_IDS, ":material/star:",
+                 "Gjinia, mosha, komuna, vendbanimi (lagjja / fshati), statusi martesor, anëtarët e familjes, "
+                 "të ardhurat personale dhe familjare, shkollimi, punësimi"),
+                ("Kliko të gjitha", all_ids, ":material/done_all:", "Të gjitha pyetjet demografike"),
+                ("Largo të gjitha", [], ":material/remove_done:", "Asnjë pyetje demografike")):
+            st.button(label, icon=icon, help=tip, on_click=set_demographics, args=(ids,),
+                      type="primary" if ticked == set(ids) else "secondary", key=f"qd_demo_set_{len(ids)}")
+    def depth(q):
+        """How many questions this one depends on, one under the other (the child's age: 2)."""
+        return 1 + depth(demo.BY_ID[q["requires"]]) if q["requires"] else 0
+
+    def demo_checkbox(q, where=st):
+        options = "; ".join(label for _, label in q["options"])
+        where.checkbox(
+            q["label"] + ("" if q["verified"] else " *"),
+            key=f"qd_demo_{q['id']}", width="stretch",
+            help="  \n".join(x for x in (
+                q["text"], f"Opsionet: {options}" if options else "", q["instruction"], demo.condition_text(q),
+                "" if q["verified"] else "*Opsionet janë propozuar; konfirmojini me Panelin.*") if x))
+
+    # one column per topic; a question that depends on another one is indented under it
+    for col, (group, ids) in zip(st.columns([0.95, 0.95, 1.05, 1.05], gap="large"), demo.GROUPS.items()):
+        with col.container(key=f"qd_demo_group_{ids[0]}"):
+            st.markdown(f'<p class="qd-demo-head">{group}</p>', unsafe_allow_html=True)
+            for qid in ids:
+                demo_checkbox(demo.BY_ID[qid])
+    st.markdown("<style>" + " ".join(
+        f'[class*="st-key-qd_demo_group_"] .st-key-qd_demo_{q["id"]} {{ margin-left: {8 * depth(q)}px; '
+        f'width: calc(100% - {8 * depth(q)}px) !important; box-sizing: border-box; padding-left: 4px; '
+        f'border-left: 2px solid rgba(34, 198, 160, .45); }}'
+        for q in demo.STANDARD if q["requires"]) + "</style>", unsafe_allow_html=True)
+    st.caption("\\* Opsionet janë propozuar dhe duhen konfirmuar me Panelin. Pyetjet e lidhura shtojnë vetë "
+               "pyetjen nga varen dhe kushtin: lagjja vetëm për urbanët, fshati vetëm për ruralët, mosha dhe gjinia "
+               "pyeten për secilin fëmijë (fëmija 1, fëmija 2 …) sipas numrit të fëmijëve.")
+    st.multiselect(
+        "Në fillim të pyetësorit (pyetje kualifikuese)", [q["id"] for q in demo.STANDARD], key="qd_demo_start",
+        format_func=lambda qid: demo.BY_ID[qid]["label"], on_change=tick_start,
+        placeholder="Asnjë: të gjitha dalin në fund",
+        help="Kur grupi i synuar zgjidhet sipas një pyetjeje demografike (p.sh. vetëm të punësuarit në sektorin "
+             "privat), zgjidheni këtu: ajo del në fillim, dhe Agjenti AI shkruan kush vazhdon intervistën.")
+    demographics = [q["id"] for q in demo.STANDARD if ss[f"qd_demo_{q['id']}"]]
+    brief.update(demographics=demo.with_required(demographics + ss["qd_demo_start"]),
+                 demographics_start=list(ss["qd_demo_start"]))
+
+# The design: a big button under the steps
+ready = bool(selected and brief["objectives"])
+with st.container(key="qd_design_go"):
+    clicked = st.button("Dizajno pyetësorin", type="primary", icon=":material/auto_awesome:", width="stretch",
+                        disabled=not ready)
+    if not ready:
+        st.caption("Për të dizajnuar pyetësorin: zgjidhni pyetësorët burim dhe shkruani udhëzimin te hapi 2 "
+                   "(ose objektivat te hapi 1).")
+if clicked:
+    context, sources = qd.bank_context([rows_by_id[i] for i in selected], bank_questions)
+    bar = st.progress(0.0, text="Agjenti AI po lexon pyetjet e bankës dhe po planifikon rrjedhën e pyetësorit (disa minuta)...")
+    try:
+        result, ok = run(qd.design, client, model, brief, context, sources,
+                         on_text=lambda text: show_design_progress(bar, text, brief["n_questions"]))
+    finally:
+        bar.empty()
+    if ok:
+        questionnaire, cost = result
+        add_cost(cost)
+        for q in questionnaire["questions"]:
+            ss["qd_next"] = ss.get("qd_next", 0) + 1
+            q["uid"] = ss["qd_next"]
+        ss.update(qd_q=questionnaire, qd_context=context, qd_sources=sources, qd_brief=brief,
+                  qd_title=questionnaire["title"], qd_intro=questionnaire["introduction"])
 
 # ---------------------------------------------------------------------------
 # 3. Editor
@@ -201,9 +330,11 @@ if questionnaire:
         return True
 
     qs = questionnaire["questions"]
+    n_demo = sum(1 for q in qs if q.get("demographic"))
     from_bank = sum(1 for q in qs if q.get("source"))
-    with ubo_ui.card("Pyetësori", step=3,
-                     subtitle=f"{len(qs)} pyetje · {from_bank} nga banka · {len(qs) - from_bank} të reja. "
+    with ubo_ui.card("Pyetësori", step=4,
+                     subtitle=f"{len(qs) - n_demo} pyetje · {from_bank} nga banka · {len(qs) - n_demo - from_bank} "
+                              f"të reja · {n_demo} demografike. "
                               "Çdo pyetje mund të ndryshohet këtu ose të rigjenerohet me një udhëzim shtesë."):
         with st.expander(f"Titulli dhe hyrja: {questionnaire['title']}"):
             questionnaire["title"] = st.text_input("Titulli", key="qd_title")
@@ -276,7 +407,9 @@ if questionnaire:
                         q["code"] = c_code.text_input("Kodi", key=k("code"))
                         q["instruction"] = st.text_input("Udhëzimi (për anketuesin / të anketuarin)",
                                                          key=k("instruction"))
-                        if q.get("source"):
+                        if q.get("demographic"):
+                            st.caption("👤 Pyetje demografike standarde (Paneli)")
+                        elif q.get("source"):
                             st.caption(f"📚 Nga banka: {q.get('source_text') or q['source']}"
                                        + (f" · Ndryshimi: {q['change']}" if q.get("change") else ""))
                         else:
@@ -317,7 +450,7 @@ if questionnaire:
     # 4. Word
     # -----------------------------------------------------------------------
 
-    with ubo_ui.card("Shkarko pyetësorin", step=4):
+    with ubo_ui.card("Shkarko pyetësorin", step=5):
         numbering = st.radio("Numërimi i pyetjeve", list(qd.NUMBERING), format_func=qd.NUMBERING.get,
                              horizontal=True, key="qd_numbering",
                              help=f"Automatik: 1, 2, 3; kur pyetësori ka më shumë se {qd.LONG_QUESTIONNAIRE} pyetje "

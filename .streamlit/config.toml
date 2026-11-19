@@ -9,6 +9,8 @@ buttonRadius = "8px"
 
 [theme.light]
 primaryColor = "#2560E6"
+# a darker header row, so the tables read more easily (all tables of the platform)
+dataframeHeaderBackgroundColor = "#E1E7F2"
 backgroundColor = "#FBFBFC"
 secondaryBackgroundColor = "#F3F4F8"
 textColor = "#26262B"
@@ -23,6 +25,7 @@ secondaryBackgroundColor = "#FFFFFF"
 
 [theme.dark]
 primaryColor = "#5B8DF6"
+dataframeHeaderBackgroundColor = "#2C3040"
 backgroundColor = "#111217"
 secondaryBackgroundColor = "#23252E"
 textColor = "#ECEDF2"

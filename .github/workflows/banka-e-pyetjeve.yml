@@ -1,5 +1,6 @@
 # Përditëson bankën e pyetjeve (Google Sheet "UBO – Banka e pyetjeve") një herë në muaj: merr nga të gjitha
-# llogaritë Kobo pyetësorët e rinj ose të ndryshuar dhe kategorizon me Claude vetëm ata që nuk janë kategorizuar.
+# llogaritë Kobo dhe nga Paneli ([panel_sources] te secrets) pyetësorët e rinj ose të ndryshuar dhe kategorizon
+# me Claude vetëm ata që nuk janë kategorizuar.
 # Mund të niset edhe me dorë: Actions -> "Banka e pyetjeve" -> Run workflow.
 #
 # Kërkon një secret të repos me emrin UBO_SECRETS, me të njëjtën përmbajtje si .streamlit/secrets.toml

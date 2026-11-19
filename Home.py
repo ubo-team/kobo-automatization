@@ -22,6 +22,9 @@ tool_pages = {tool.url_path: st.Page(tool.file, title=tool.title, url_path=tool.
 # fare (më parë krijohej e pastaj fshihej me CSS, prandaj dukej për një çast kur hapej faqja).
 page = st.navigation([home, *tool_pages.values()], position="hidden")
 tool = next((t for t in ubo_ui.TOOLS if t.url_path == page.url_path), None)
+# Whether this run opened another page (the pages use it for things done once per visit)
+st.session_state["ubo_page_changed"] = st.session_state.get("ubo_page") != page.url_path
+st.session_state["ubo_page"] = page.url_path
 
 # Për çdo faqe: ngjyrat e temës (e çelët / e errët), butoni i temës dhe dritarja "Ju lutem prisni"
 st.markdown(ubo_ui.base_css(), unsafe_allow_html=True)
