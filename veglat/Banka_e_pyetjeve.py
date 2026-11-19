@@ -1,11 +1,13 @@
 import datetime
 import re
+import zipfile
 from io import BytesIO
 
 import pandas as pd
 import streamlit as st
 
 import question_bank as qb
+import questionnaire_design as qd
 import questionnaire_ai as qai
 import ubo_ui
 
@@ -30,7 +32,7 @@ questions = "https://admin.uboconsulting-ks.com/QuestionBank/Questions?secret=..
 
 PAGE_SIZE = 15          # questionnaires per page of the table
 # hidden at first, so the table fits without scrolling sideways; the "Kolonat" button shows them
-HIDDEN_COLUMNS = ("metodologjite", "temat", "klienti", "perditesuar", "kopjet", "id")
+HIDDEN_COLUMNS = ("metodologjite", "temat", "klienti", "perditesuar", "kopjet")
 
 # The table's toolbar (columns, download, search, full screen) is always shown, with Albanian names next to the
 # icons; Streamlit shows only the icons, and only while the mouse is over the table
@@ -104,7 +106,22 @@ TOOLBAR_CSS = """<style>
 .st-key-bank_tab .react-aria-SelectionIndicator, .st-key-bank_tab [role="tablist"]::after { display: none; }
 /* the toolbar of the questionnaires table sits on the row of the tabs, on the right */
 .st-key-bank_table { margin-top: 0 !important; }
+.st-key-bank_picked_actions { margin: 6px 0 12px; }
+.st-key-bank_picked_box { margin-top: 18px; padding-top: 14px; border-top: 2px solid #22C6A044; }
+.bank-picked-head { margin: 0 0 4px; font: 700 13px "Inter", system-ui, sans-serif; letter-spacing: .06em;
+                    text-transform: uppercase; color: #0B8F76; }
+.st-key-bank_download_docx button { background: #0B8F76 !important; border-color: #0B8F76 !important;
+                                    color: #fff !important; }
+.st-key-bank_download_docx button:hover { background: #097a65 !important; }
+[class*="st-key-bank_pick_"] h4 { padding: 0 0 2px; }
 .st-key-bank_table .stElementToolbar { top: -73px !important; }
+.st-key-bank_table { position: relative; }
+.st-key-bankword { position: absolute; top: -44px; right: 394px; width: auto !important;
+                   z-index: 3; }
+.st-key-bankword button { height: 34px; min-height: 34px; padding: 0 12px; border-radius: 8px;
+                          border: 1px solid var(--ubo-line-2, #d0d4de); background: var(--ubo-surface, #fff); }
+.st-key-bankword button p { font: 600 13px Inter, system-ui, sans-serif; }
+.st-key-bankword button:hover { border-color: var(--ubo-sel-border, #2560E6); background: var(--ubo-hover-bg, #eef3fe); }
 /* thin scroll bars on this page: the page and the long tables */
 * { scrollbar-width: thin; scrollbar-color: color-mix(in srgb, var(--ubo-muted, #888) 55%, transparent) transparent; }
 </style>"""
@@ -169,6 +186,92 @@ def page_slice(total, state_key):
     n_pages = max(1, -(-total // PAGE_SIZE))
     page_no = min(st.session_state.get(state_key, 1), n_pages)
     return page_no, n_pages, (page_no - 1) * PAGE_SIZE, min(page_no * PAGE_SIZE, total)
+
+
+# Kobo's question types in Albanian, for the tables and the Excel files (the others keep their name)
+TYPE_NAMES = {"select_one": "Një përgjigje", "select_multiple": "Disa përgjigje", "integer": "Numër i plotë",
+              "decimal": "Numër dhjetor", "text": "Tekst", "note": "Shënim", "date": "Datë", "time": "Orë",
+              "datetime": "Datë dhe orë", "range": "Shkallë vlerësimi", "matrix": "Matricë", "rank": "Renditje",
+              "acknowledge": "Konfirmim"}
+
+
+def type_name(kind):
+    return TYPE_NAMES.get(kind, kind)
+
+
+# Kobo's question types (as kept in the bank) -> the Word questionnaire's (questionnaire_design.QUESTION_TYPES)
+WORD_TYPES = {"select_one": "single", "select_multiple": "multiple", "integer": "numeric", "decimal": "numeric",
+              "range": "numeric", "text": "text", "note": "note", "date": "date", "datetime": "date",
+              "time": "text", "matrix": "matrix", "rank": "ranking"}
+
+
+def word_language(languages):
+    """The language of the Word texts ("Një përgjigje", "FILTËR" …) from the bank's "gjuhet"."""
+    first = (languages or "").split(",")[0].lower()
+    return ("English" if "english" in first or "(en)" in first else
+            "Srpski" if any(x in first for x in ("srpski", "serbian", "(sr)")) else "Shqip")
+
+
+def bank_docx(row, qs):
+    """One questionnaire of the bank as a Word document: its groups as sections, its filters with the
+    document's question numbers."""
+    words = []
+    for q in qs:
+        kind = WORD_TYPES.get(q["type"], "text")
+        options = [(str(c), str(l)) for c, l in q["options"]]
+        if kind == "ranking" and options and not q.get("items"):
+            items, options = [l for _, l in options], []
+        else:
+            items = [str(x) for x in q.get("items") or []]
+        if kind == "matrix" and not options:
+            kind = "text"
+        words.append({"code": q["name"], "section": q["group"], "filter": q.get("filter", ""), "text": q["text"],
+                      "type": kind, "options": options, "items": items, "instruction": q.get("hint", ""),
+                      "source": "", "change": "", "source_text": ""})
+    return qd.to_docx({"title": row["titulli"], "introduction": "", "questions": words},
+                      word_language(row.get("gjuhet")))
+
+
+def picked_zip(rows, questions):
+    """The picked questionnaires as Word documents in one ZIP, built only when the button is clicked."""
+    def build():
+        out, used = BytesIO(), set()
+        with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
+            for row in rows:
+                name = re.sub(r"[^\w\- ]+", "", row["titulli"]).strip().replace(" ", "_")[:80] or "pyetesori"
+                file, n = name, 2
+                while file.lower() in used:            # two questionnaires with the same title
+                    file, n = f"{name}_{n}", n + 1
+                used.add(file.lower())
+                z.writestr(f"{file}.docx", bank_docx(row, questions.get(row["id"], [])))
+        return out.getvalue()
+    return build
+
+
+def table_docx(frame, title, note):
+    """The questionnaires table as a Word document (landscape): the rows of the filters, the visible columns."""
+    from docx import Document
+    from docx.enum.section import WD_ORIENT
+    from docx.shared import Cm, Pt
+
+    doc = Document()
+    sec = doc.sections[0]
+    sec.orientation, sec.page_width, sec.page_height = WD_ORIENT.LANDSCAPE, sec.page_height, sec.page_width
+    sec.left_margin = sec.right_margin = sec.top_margin = sec.bottom_margin = Cm(1.5)
+    doc.styles["Normal"].font.name, doc.styles["Normal"].font.size = "Calibri", Pt(9)
+    doc.add_heading(title, level=1)
+    doc.add_paragraph(note).runs[0].italic = True
+    table = doc.add_table(rows=1, cols=len(frame.columns))
+    table.style = "Light Grid Accent 1"
+    for cell, name in zip(table.rows[0].cells, frame.columns):
+        cell.text = str(name)
+        cell.paragraphs[0].runs[0].bold = True
+    for values in frame.itertuples(index=False):
+        for cell, value in zip(table.add_row().cells, values):
+            cell.text = "" if pd.isna(value) else str(value)
+    out = BytesIO()
+    doc.save(out)
+    return out.getvalue()
 
 
 def zebra(frame):
@@ -274,10 +377,16 @@ with ubo_ui.card("", key="banka"):     # the page header already says what it is
         def build():
             ids = set(catalog_rows["id"])
             output = BytesIO()
+            titles = dict(zip(catalog_rows["id"], catalog_rows["titulli"]))
             with pd.ExcelWriter(output, engine="openpyxl") as writer:
-                catalog_rows.drop(columns=["perdorshem"]).to_excel(writer, sheet_name="Pyetesoret", index=False)
-                pd.DataFrame([{"pyetesori_id": qid, **q, "options": "; ".join(f"{c}={l}" for c, l in q["options"]),
-                               "items": " | ".join(q.get("items") or [])}
+                # without the ids of the forms (account:uid) and the internal columns
+                catalog_rows.drop(columns=["id", "burimet", "perdorshem", "kategorizuar"]).to_excel(
+                    writer, sheet_name="Pyetesoret", index=False)
+                pd.DataFrame([{"pyetesori": titles[qid], "nr": q["nr"], "emri": q["name"],
+                               "lloji": type_name(q["type"]), "grupi": q["group"], "pyetja": q["text"],
+                               "filtri": q.get("filter", ""), "udhezimi": q.get("hint", ""),
+                               "opsionet": "; ".join(f"{c}={l}" for c, l in q["options"]),
+                               "rreshtat": " | ".join(q.get("items") or [])}
                               for qid, qs in questions.items() if qid in ids for q in qs]
                              ).to_excel(writer, sheet_name="Pyetjet", index=False)
             return output.getvalue()
@@ -353,7 +462,7 @@ with ubo_ui.card("", key="banka"):     # the page header already says what it is
 
     columns = {"titulli": "Titulli", "industria": "Industria", "lloji": "Lloji", "metodologjite": "Metodologjitë",
                "temat": "Temat", "klienti": "Klienti", "nr_pyetjeve": "Pyetje", "dergesat": "Dërgesa",
-               "perditesuar": "Përditësuar", "kopjet": "Kopje", "id": "ID"}
+               "perditesuar": "Përditësuar", "kopjet": "Kopje"}
     filters = (tuple(industry), tuple(kind), tuple(method), search)
     if st.session_state.get("bank_filters") != filters:      # other filters: back to the first page
         st.session_state["bank_filters"] = filters
@@ -368,36 +477,97 @@ with ubo_ui.card("", key="banka"):     # the page header already says what it is
         # A page of PAGE_SIZE questionnaires at a time, the table as tall as its rows: no long scrolling inside it
         page_no, n_pages, start, end = page_slice(len(view), "bank_page")
         page_view = view.iloc[start:end]
+        # Several questionnaires can be picked, on any page: "bank_picked" keeps them (it is also the list under the
+        # table). The table of a page starts with its picked rows ticked; a tick added or taken away changes the list.
+        ss = st.session_state
+        ss.setdefault("bank_picked", [])
+        page_ids = list(page_view["id"])
+        # a new key per page, filter and change of the list from outside the table (so its ticks start again)
+        table_key = f"bank_rows_{page_no}_{hash(tuple(page_ids))}_{ss.get('bank_pick_ver', 0)}"
+        if table_key not in ss:
+            ss[f"{table_key}_prev"] = [i for i in page_ids if i in ss["bank_picked"]]
+        visible = [col for col in columns if col not in HIDDEN_COLUMNS]
+        filter_note = "; ".join(f"{name}: {', '.join(v) if isinstance(v, (list, tuple)) else v}"
+                                for name, v in (("Industria", industry), ("Lloji", kind), ("Metodologjia", method),
+                                                ("Kërkimi", search)) if v)
         with st.container(key="bank_table"):
-            # a new key per page and filter, so a row picked on one page is not taken for a row of another
-            picked = st.dataframe(zebra(page_view[list(columns)].rename(columns=columns)), hide_index=True,
-                                  width="stretch",
-                                  column_order=[label for col, label in columns.items() if col not in HIDDEN_COLUMNS],
-                                  height="content", on_select="rerun", selection_mode="single-row",
-                                  key=f"bank_rows_{page_no}_{hash(tuple(page_view['id']))}")
-        # with filters, the results (green) and the whole bank (blue); without filters, the whole bank (green)
+            # beside the table's own buttons (on the row of the tabs): the table as shown, in Word
+            with st.container(key="bankword"):
+                st.download_button(
+                    "Shkarko tabelën në Word", icon=":material/description:", key="bankword_btn",
+                    data=lambda: table_docx(view[visible].rename(columns=columns), "Banka e pyetjeve",
+                                            f"{len(view)} pyetësorë" + (f" · Filtrat: {filter_note}" if filter_note
+                                                                         else " · pa filtra")),
+                    file_name="tabela_e_pyetesoreve.docx",
+                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                    help="Tabela ashtu siç duket: të gjithë pyetësorët e filtruar (jo vetëm kjo faqe), me kolonat "
+                         "e dukshme.")
+            picked = st.dataframe(
+                zebra(page_view[list(columns)].rename(columns=columns)), hide_index=True, width="stretch",
+                column_order=[label for col, label in columns.items() if col not in HIDDEN_COLUMNS],
+                height="content", on_select="rerun", selection_mode="multi-row", key=table_key,
+                selection_default={"selection": {"rows": [n for n, i in enumerate(page_ids)
+                                                          if i in ss["bank_picked"]]}})
+        now = [page_ids[n] for n in picked.selection.rows if n < len(page_ids)]
+        before = ss[f"{table_key}_prev"]
+        if set(now) != set(before):
+            ss["bank_picked"] = ([i for i in ss["bank_picked"] if i not in set(before) - set(now)]
+                                 + [i for i in now if i not in ss["bank_picked"]])
+            ss[f"{table_key}_prev"] = now
+        # with filters, the results as Word documents in a ZIP; without filters, the whole bank in Excel
         filtered = len(view) < len(df)
-        downloads = []
         if filtered:
-            downloads.append(("bank_download", dict(
-                label=f"Shkarko rezultatet ({len(view)})", data=bank_excel(view), disabled=view.empty,
-                file_name="banka_e_pyetjeve_filtruar.xlsx", mime=xlsx, icon=":material/filter_alt:",
-                help="Excel me pyetësorët që kanë mbetur pas filtrave dhe kërkimit, bashkë me pyetjet e tyre.")))
-        downloads.append(("bank_download_all" if filtered else "bank_download", dict(
-            label="Shkarko gjithë bankën", data=bank_excel(df), file_name="banka_e_pyetjeve.xlsx", mime=xlsx,
-            icon=":material/download:", help="Excel me të gjithë pyetësorët e bankës, bashkë me pyetjet e tyre.")))
+            downloads = [("bank_download", dict(
+                label=f"Shkarko rezultatet ({len(view)})", disabled=view.empty,
+                data=picked_zip([dict(r) for r in view.to_dict("records")], questions),
+                file_name="pyetesoret_e_filtruar.zip", mime="application/zip", icon=":material/folder_zip:",
+                help="Një dokument Word për çdo pyetësor që ka mbetur pas filtrave dhe kërkimit, në një dosje ZIP."))]
+        else:
+            downloads = [("bank_download", dict(
+                label="Shkarko gjithë bankën", data=bank_excel(df), file_name="banka_e_pyetjeve.xlsx", mime=xlsx,
+                icon=":material/download:", help="Excel me të gjithë pyetësorët e bankës, bashkë me pyetjet e tyre."))]
         table_bar(len(view), "bank_page", ("pyetësorët", "pyetësorë"), page_no, n_pages,
-                  "Klikoni një rresht për të parë pyetjet e pyetësorit.", downloads)
+                  "Klikoni një ose më shumë rreshta (edhe në faqe të ndryshme) për të parë pyetjet e tyre.",
+                  downloads)
 
-        rows = picked.selection.rows if picked else []
-        if rows:
-            row = page_view.iloc[rows[0]]
-            st.markdown(f"**{row['titulli']}** — {row['pershkrimi']}")
-            st.caption(f"Burimet: {row['burimet']}")
-            st.dataframe(pd.DataFrame([{"Nr": q["nr"], "Emri": q["name"], "Lloji": q["type"], "Grupi": q["group"],
-                                        "Pyetja": q["text"], "Rreshtat": " | ".join(q.get("items") or []),
-                                        "Opsionet": "; ".join(f"{c}={l}" for c, l in q["options"])}
-                                       for q in questions.get(row["id"], [])]), hide_index=True, width="stretch")
+        # The picked questionnaires: the list (a chip can be taken away), their questions, then the download
+        rows_by_id = df.set_index("id")
+        ss["bank_picked"] = [i for i in ss["bank_picked"] if i in rows_by_id.index]
+        if ss["bank_picked"]:
+            with st.container(key="bank_picked_box"):
+                st.markdown(f'<p class="bank-picked-head">Pyetësorët e zgjedhur ({len(ss["bank_picked"])})</p>',
+                            unsafe_allow_html=True)
+                # the list and, on the same line, the button that empties it
+                c_list, c_clear = st.columns([5, 1], vertical_alignment="center")
+                c_list.multiselect("Pyetësorët e zgjedhur", list(rows_by_id.index), key="bank_picked",
+                                   format_func=lambda i: rows_by_id.at[i, "titulli"], label_visibility="collapsed",
+                                   on_change=lambda: ss.update(bank_pick_ver=ss.get("bank_pick_ver", 0) + 1))
+                c_clear.button("Hiq zgjedhjen", icon=":material/close:", width="stretch", key="bank_pick_clear",
+                               on_click=lambda: ss.update(bank_picked=[],
+                                                          bank_pick_ver=ss.get("bank_pick_ver", 0) + 1))
+            for i in ss["bank_picked"]:
+                row = rows_by_id.loc[i]
+                qs = questions.get(i, [])
+                with st.container(border=True, key=f"bank_pick_{re.sub(r'[^A-Za-z0-9_]', '_', i)}"):
+                    facts = " · ".join(x for x in (row["industria"], row["lloji"], f"{len(qs)} pyetje",
+                                                   f"{row['dergesat']} dërgesa", row["perditesuar"]) if x)
+                    st.markdown(f"#### {row['titulli']}")
+                    st.caption(facts + (f"  \n{row['pershkrimi']}" if row["pershkrimi"] else ""))
+                    st.dataframe(pd.DataFrame([{
+                        "Nr": q["nr"], "Emri": q["name"], "Lloji": type_name(q["type"]), "Grupi": q["group"],
+                        "Pyetja": q["text"],
+                        "Filtri": q.get("filter", ""), "Rreshtat": " | ".join(q.get("items") or []),
+                        "Opsionet": "; ".join(f"{c}={l}" for c, l in q["options"])} for q in qs]),
+                        hide_index=True, width="stretch", height=min(38 + 35 * len(qs), 420))
+            # the download under the questionnaires, in the middle
+            with st.container(key="bank_picked_actions"):
+                _, c_zip, _ = st.columns([1, 1.3, 1])
+                with c_zip.container(key="bank_download_docx"):
+                    st.download_button(
+                        f"Shkarko pyetësorët e zgjedhur ({len(ss['bank_picked'])})", data=picked_zip(
+                            [dict(rows_by_id.loc[i], id=i) for i in ss["bank_picked"]], questions),
+                        file_name="pyetesoret_e_zgjedhur.zip", mime="application/zip", icon=":material/folder_zip:",
+                        width="stretch", help="Një dokument Word për çdo pyetësor, të gjithë në një dosje ZIP.")
 
     with tab_questions:
         # Search in the questions themselves; the same question used in several questionnaires is one row
@@ -434,9 +604,9 @@ with ubo_ui.card("", key="banka"):     # the page header already says what it is
                 result = pd.DataFrame([{
                     "Pyetja": g["q"]["text"],
                     "Opsionet": "; ".join(label for _, label in g["q"]["options"]),
-                    "Lloji": g["q"]["type"],
+                    "Lloji": type_name(g["q"]["type"]),
                     "Pyetësorë": len({qid for qid, _ in g["uses"]}),
-                    "Përdorur p.sh. te": used_in([titles.get(qid, qid) for qid, _ in g["uses"]]),
+                    "Përdorur p.sh. te": used_in([titles.get(qid, "") for qid, _ in g["uses"]]),
                 } for g in found])
                 page_no, n_pages, start, end = page_slice(len(found), "bank_q_page")
                 with st.container(key="bank_table_q"):
@@ -453,8 +623,8 @@ with ubo_ui.card("", key="banka"):     # the page header already says what it is
                 def found_excel():
                     out = BytesIO()
                     pd.DataFrame([{
-                        "pyetja": q["text"], "pyetja_unike": q.get("unique", ""), "lloji": q["type"],
-                        "nr": q["nr"], "emri": q["name"], "pyetesori": titles.get(qid, qid), "pyetesori_id": qid,
+                        "pyetja": q["text"], "pyetja_unike": q.get("unique", ""), "lloji": type_name(q["type"]),
+                        "nr": q["nr"], "emri": q["name"], "pyetesori": titles.get(qid, ""),
                         "opsionet": "; ".join(f"{c}={l}" for c, l in q["options"]),
                         "rreshtat": " | ".join(q.get("items") or []),
                     } for g in found for qid, q in g["uses"]]).to_excel(out, sheet_name="Pyetjet", index=False)
@@ -475,9 +645,9 @@ with ubo_ui.card("", key="banka"):     # the page header already says what it is
                                 f"pyetësorë")
                     info = df.set_index("id")
                     st.dataframe(pd.DataFrame([{
-                        "Pyetësori": titles.get(qid, qid),
+                        "Pyetësori": titles.get(qid, ""),
                         "Industria": info.at[qid, "industria"] if qid in info.index else "",
                         "Lloji i studimit": info.at[qid, "lloji"] if qid in info.index else "",
-                        "Nr": q["nr"], "Emri": q["name"], "Pyetja": q["text"],
+                        "Nr": q["nr"], "Emri": q["name"], "Lloji": type_name(q["type"]), "Pyetja": q["text"],
                         "Opsionet": "; ".join(f"{c}={l}" for c, l in q["options"]),
                     } for qid, q in g["uses"]]), hide_index=True, width="stretch")
