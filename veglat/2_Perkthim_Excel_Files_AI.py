@@ -5,36 +5,12 @@ from io import BytesIO
 import re
 import os
 import time
-import google.generativeai as genai
 from translation_fallback import ClaudeFallback
 
 
 
 st.set_page_config(layout="centered")
 
-
-GEMINI_TRANSLATION_API_KEY = st.secrets["GEMINI_TRANSLATION_API_KEY"]
-genai.configure(api_key=GEMINI_TRANSLATION_API_KEY)
-
-GEMINI_PRICING = {
-    "models/gemini-2.5-flash": {
-        "inputPer1MTokens":  0.30,
-        "outputPer1MTokens": 2.50,
-    },
-    "models/gemini-3.1-flash-lite-preview": {
-        "inputPer1MTokens":  0.25,
-        "outputPer1MTokens": 1.50,
-    },
-}
-
-
-def calculate_gemini_cost(prompt_tokens: int, completion_tokens: int, model: str) -> float:
-    pricing = GEMINI_PRICING.get(model, GEMINI_PRICING["models/gemini-2.5-flash"])
-    input_rate  = pricing["inputPer1MTokens"]
-    output_rate = pricing["outputPer1MTokens"]
-    input_cost  = ((prompt_tokens     or 0) / 1_000_000) * input_rate
-    output_cost = ((completion_tokens or 0) / 1_000_000) * output_rate
-    return input_cost + output_cost
 
 LANGUAGE_OPTIONS_UI = {
     "Gjuha Shqipe": "sq",
@@ -68,16 +44,13 @@ LANG_NAMES = {
     "bs": "Bosnian"
 }
 
-MODEL_NAME = "gemini-3.1-flash-lite-preview"
-gemini_model = genai.GenerativeModel(MODEL_NAME)
-claude = ClaudeFallback(st.secrets)   # translates what Gemini fails to translate
+claude = ClaudeFallback(st.secrets)   # the translator (Claude)
 
 
-BATCH_SIZE = 50
 
 
 def translate_dataframe(df, source_col, target_col, from_lang, to_lang):
-    total_in, total_out = 0, 0
+    tokens_in, tokens_out = claude.tokens_in, claude.tokens_out
     errors = []
     results = list(df[source_col].values)
 
@@ -100,49 +73,16 @@ def translate_dataframe(df, source_col, target_col, from_lang, to_lang):
     to_name = LANG_NAMES.get(to_lang, to_lang)
 
     progress = st.progress(0, text="Duke përkthyer... 0%")
-
-    for batch_start in range(0, len(to_translate), BATCH_SIZE):
-        batch = to_translate[batch_start:batch_start + BATCH_SIZE]
-        texts = [text for _, _, text in batch]
-
-        numbered_texts = "\n".join(f"[{j+1}] {t}" for j, t in enumerate(texts))
-        prompt = (
-            f"{from_name} to {to_name}. Reply [N] translation only.\n\n{numbered_texts}"
-        )
-
-        translations, gemini_error = {}, None
-        try:
-            response = gemini_model.generate_content(
-                prompt,
-                generation_config=genai.types.GenerationConfig(temperature=0.1, max_output_tokens=4096),
-            )
-            in_tok = getattr(response.usage_metadata, "prompt_token_count", 0) or 0
-            out_tok = getattr(response.usage_metadata, "candidates_token_count", 0) or 0
-            total_in += in_tok
-            total_out += out_tok
-
-            for line in response.text.strip().split("\n"):
-                m = re.match(r"\[(\d+)\]\s*(.*)", line.strip())
-                if m:
-                    translations[int(m.group(1))] = m.group(2).strip()
-        except Exception as e:
-            gemini_error = e
-
-        error = claude.fill(texts, translations, from_name, to_name, gemini_error)
-        if error:
-            errors.append(error)
-
-        for j, (idx, code, _) in enumerate(batch):
-            if (j + 1) in translations:
-                results[idx] = code + translations[j + 1]
-
-        done = min(batch_start + BATCH_SIZE, len(to_translate))
-        pct = done / len(to_translate)
-        progress.progress(pct, text=f"Duke përkthyer... {done}/{len(to_translate)}")
+    translated, errors = claude.translate_all(
+        [text for _, _, text in to_translate], from_name, to_name,
+        progress=lambda done, total: progress.progress(done / total, text=f"Duke përkthyer... {done}/{total} grupe"))
+    for k, (idx, code, _) in enumerate(to_translate):
+        if k in translated:
+            results[idx] = code + translated[k]
 
     progress.empty()
     df[target_col] = results
-    return df, total_in, total_out, errors
+    return df, claude.tokens_in - tokens_in, claude.tokens_out - tokens_out, errors
 
 with ubo_ui.card("Ngarkoni dokumentin Excel", step=1):
     uploaded_file = st.file_uploader("Ngarko Excel-in", type=["xlsx"], label_visibility="collapsed")
@@ -182,7 +122,7 @@ if uploaded_file:
 
             if st.button(f"Fillo Përkthimin për {selected_sheet} (Blloku {block_id + 1})", key=f"translate_btn_{block_id}", type="primary"):
                 block_in_tokens, block_out_tokens = 0, 0
-                claude_cost, claude_texts = claude.cost, claude.texts
+                cost_before = claude.cost
                 all_errors = []
                 for target_col, to_lang in target_languages:
                     df, in_tok, out_tok, errors = translate_dataframe(df, source_col, target_col, from_lang=from_lang, to_lang=to_lang)
@@ -198,15 +138,11 @@ if uploaded_file:
 
                 st.write(df.head())
 
-                model_id = f"models/{MODEL_NAME}"
-                claude_cost, claude_texts = claude.cost - claude_cost, claude.texts - claude_texts
-                block_cost = calculate_gemini_cost(block_in_tokens, block_out_tokens, model_id) + claude_cost
-                claude_line = (f"  \nGemini dështoi për **{claude_texts}** tekste; i përktheu Agjenti AI "
-                               f"(**${claude_cost:.4f}**)" if claude_texts else "")
+                block_cost = claude.cost - cost_before
                 st.info(
                     f"**Kostoja e Bllokut {block_id + 1}:**  \n"
                     f"Tokenë hyrës: **{block_in_tokens:,}** | Tokenë dalës: **{block_out_tokens:,}**  \n"
-                    f"Kostoja: **${block_cost:.4f}**{claude_line}"
+                    f"Kostoja: **${block_cost:.4f}**"
                 )
 
             if block_id == len(st.session_state.translation_blocks) - 1:

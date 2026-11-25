@@ -1,9 +1,8 @@
 """Languages of the Gjenero XLS form.
 
 Works on the tagged line format of questionnaire_ai (texts of several languages joined with " || "):
-- translates a questionnaire into the chosen languages with Gemini,
-- merges translations that come as separate files (one file per language), also with Gemini,
-  (Claude takes over a request when Gemini fails, and the texts Gemini leaves untranslated),
+- translates a questionnaire into the chosen languages with Claude,
+- merges translations that come as separate files (one file per language), also with Claude,
 - keeps or reorders the languages of a questionnaire that already holds them.
 Only the texts change (question, option, note, hint, titles, scale labels); numbers and tags stay as they are.
 """
@@ -12,15 +11,9 @@ import json
 import re
 from concurrent.futures import ThreadPoolExecutor
 
-import google.generativeai as genai
-
 from questionnaire_ai import (CANCEL, TRANSLATION_EFFORT, AIError, Cancelled, LANG_SEP, TAG_RE, _call_claude,
                               declared_languages, estimate_cost, is_tag, strip_tags)
 
-GEMINI_MODEL = "gemini-2.5-flash"      # the page can override it with GEMINI_MODEL in secrets
-# USD per 1M tokens (input, output), used only for the cost estimate shown in the UI
-GEMINI_PRICING = {"gemini-2.5-flash": (0.30, 2.50), "gemini-3.1-flash-lite": (0.25, 1.50),
-                  "gemini-2.5-pro": (1.25, 10.00)}
 BATCH_SIZE = 60           # texts per translation call
 ALIGN_BATCH_SIZE = 120    # texts per call when matching against a translated file
 WORKERS = 4
@@ -55,11 +48,7 @@ def language_name(name):
     return LANGUAGE_NAMES.get(name.lower(), name[:1].upper() + name[1:])
 
 
-def configure(api_key):
-    genai.configure(api_key=api_key)
-
-
-CLAUDE = None          # (client, model) of the backup translator, set by the page with configure_claude
+CLAUDE = None          # (client, model) of the translator, set by the page with configure_claude
 
 
 def configure_claude(client, model):
@@ -182,50 +171,18 @@ def _pick(segs, k):
 
 
 # ---------------------------------------------------------------------------
-# Gemini
+# Claude
 # ---------------------------------------------------------------------------
 
-def _gemini(prompt, model_name):
-    model = genai.GenerativeModel(model_name)
-    try:
-        response = model.generate_content(
-            prompt,
-            generation_config=genai.types.GenerationConfig(temperature=0.1, max_output_tokens=65536,
-                                                           response_mime_type="application/json"))
-        data = json.loads(response.text)
-    except json.JSONDecodeError:
-        raise AIError("Përgjigja e Gemini nuk ishte në formatin e pritur. Provo përsëri.")
-    except Exception as e:
-        raise AIError(f"Gabim nga Gemini: {e}")
-    usage = response.usage_metadata
-    price_in, price_out = GEMINI_PRICING.get(model_name, GEMINI_PRICING["gemini-2.5-flash"])
-    cost = ((getattr(usage, "prompt_token_count", 0) or 0) * price_in
-            + (getattr(usage, "candidates_token_count", 0) or 0) * price_out) / 1_000_000
-    return data, cost
-
-
 def _ai(prompt, model_name, schema, claude_only=False):
-    """Gemini, or Claude when Gemini fails (or with claude_only, or without a Gemini model).
-    Returns (data, cost, True when Claude answered)."""
-    gemini_error = None
-    if model_name and not claude_only:
-        try:
-            return *_gemini(prompt, model_name), False
-        except AIError as e:
-            gemini_error = e
-            if CLAUDE is None:
-                raise
+    """One translation request to Claude. Returns (data, cost, False); model_name and claude_only are kept for
+    the callers (Gemini is no longer used)."""
     if CLAUDE is None:
-        raise AIError("Mungon çelësi `GEMINI_TRANSLATION_API_KEY` në secrets të aplikacionit.")
+        raise AIError("Mungon çelësi `ANTHROPIC_API_KEY` në secrets të aplikacionit.")
     client, model = CLAUDE
-    try:
-        data, usage = _call_claude(client, "You translate survey questionnaires for KoboToolbox forms.", prompt,
-                                   schema, effort=TRANSLATION_EFFORT, model=model)
-    except Cancelled:
-        raise
-    except AIError as e:
-        raise AIError(f"{gemini_error} Edhe Agjenti AI dështoi: {e}" if gemini_error else str(e))
-    return data, estimate_cost(usage, model), True
+    data, usage = _call_claude(client, "You translate survey questionnaires for KoboToolbox forms.", prompt,
+                               schema, effort=TRANSLATION_EFFORT, model=model)
+    return data, estimate_cost(usage, model), False
 
 
 def _items_schema(item_properties):
@@ -245,7 +202,7 @@ RULES = """Rules:
 
 
 def _item_id(it, items):
-    """The id of a returned item when it is one of the items asked for (Gemini may return it as a string)."""
+    """The id of a returned item when it is one of the items asked for (it may come back as a string)."""
     try:
         i = int(it.get("id")) if isinstance(it, dict) else None
     except (TypeError, ValueError):
@@ -343,20 +300,19 @@ def _keep_blanks(source, translated):
     return translated
 
 
-def translate(lines, languages, model_name=GEMINI_MODEL):
-    """Translates a questionnaire (its first language) into `languages` with Gemini, retrying the texts that
+def translate(lines, languages, model_name=None):
+    """Translates a questionnaire (its first language) into `languages` with Claude, retrying the texts that
     came back empty. Returns (lines, notes, cost)."""
     lines = _first_language(lines)
     items = _source_texts(lines)
     translations, cost, by_claude = {}, 0.0, 0
-    # two rounds with Gemini; the texts still missing after them go to Claude
-    for attempt in range(3 if CLAUDE else 2):
+    # a second round for the texts that came back empty
+    for attempt in range(2):
         todo = [(i, t) for i, t in items
                 if i not in translations or not all(translations[i].get(l) for l in languages)]
         if not todo:
             break
-        claude_only = attempt == 2
-        for result, c, claude in _run(lambda b: _translate_batch(b, languages, model_name, claude_only),
+        for result, c, claude in _run(lambda b: _translate_batch(b, languages, model_name),
                                       _batches(todo, BATCH_SIZE)):
             translations.update(result)
             cost += c
@@ -368,15 +324,11 @@ def translate(lines, languages, model_name=GEMINI_MODEL):
         src = p["texts"][slot][0]
         return _keep_blanks(src, by_text.get(src, {}).get(languages[k]) or src)
 
-    notes = [f"Gemini nuk ktheu përkthim për {missing} tekste; aty mbeti teksti origjinal."] if missing else []
-    return _rebuild(lines, languages, text_for), notes + _claude_note(by_claude), cost
+    notes = [f"Agjenti AI nuk ktheu përkthim për {missing} tekste; aty mbeti teksti origjinal."] if missing else []
+    return _rebuild(lines, languages, text_for), notes, cost
 
 
-def _claude_note(n):
-    return [f"Gemini dështoi në {n} kërkesa përkthimi; ato i përktheu Agjenti AI."] if n else []
-
-
-def merge_translations(lines, languages, references, model_name=GEMINI_MODEL):
+def merge_translations(lines, languages, references, model_name=None):
     """Adds the translations that come as separate files: `lines` hold the first language (the main file),
     `references` = {language: text of that language's file}. Returns (lines, notes, cost)."""
     lines = _first_language(lines)
@@ -393,7 +345,8 @@ def merge_translations(lines, languages, references, model_name=GEMINI_MODEL):
             cost += c
             by_claude += claude
         if not_found:
-            notes.append(f"{not_found} tekste nuk u gjetën në dokumentin {lang} dhe i përktheu Gemini; kontrolloji.")
+            notes.append(f"{not_found} tekste nuk u gjetën në dokumentin {lang} dhe i përktheu Agjenti AI; "
+                         "kontrolloji.")
     by_text = {lang: {t: texts[lang].get(i) for i, t in items} for lang in languages[1:]}
 
     def text_for(p, slot, k):
@@ -402,7 +355,7 @@ def merge_translations(lines, languages, references, model_name=GEMINI_MODEL):
             return src
         return _keep_blanks(src, by_text[languages[k]].get(src) or "")
 
-    return _rebuild(lines, languages, text_for), notes + _claude_note(by_claude), cost
+    return _rebuild(lines, languages, text_for), notes, cost
 
 
 def _first_language(lines):

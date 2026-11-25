@@ -4,31 +4,10 @@ from io import BytesIO
 import os
 import re
 import time
-import google.generativeai as genai
 from docx import Document
 from translation_fallback import ClaudeFallback
 
 st.set_page_config(layout="centered")
-
-
-GEMINI_TRANSLATION_API_KEY = st.secrets["GEMINI_TRANSLATION_API_KEY"]
-genai.configure(api_key=GEMINI_TRANSLATION_API_KEY)
-
-GEMINI_PRICING = {
-    "models/gemini-2.5-flash": {
-        "inputPer1MTokens":  0.30,
-        "outputPer1MTokens": 2.50,
-    },
-}
-
-
-def calculate_gemini_cost(prompt_tokens: int, completion_tokens: int, model: str) -> float:
-    pricing = GEMINI_PRICING.get(model, GEMINI_PRICING["models/gemini-2.5-flash"])
-    input_rate  = pricing["inputPer1MTokens"]
-    output_rate = pricing["outputPer1MTokens"]
-    input_cost  = ((prompt_tokens     or 0) / 1_000_000) * input_rate
-    output_cost = ((completion_tokens or 0) / 1_000_000) * output_rate
-    return input_cost + output_cost
 
 
 LANGUAGE_OPTIONS_UI = {
@@ -47,43 +26,11 @@ LANG_NAMES = {
     "bs": "Bosnian"
 }
 
-MODEL_NAME = "gemini-3.1-flash-lite-preview"
-gemini_model = genai.GenerativeModel(MODEL_NAME)
-claude = ClaudeFallback(st.secrets)   # translates what Gemini fails to translate
-
-
-BATCH_SIZE = 50
-
-
-def translate_batch(texts, from_lang, to_lang):
-    """Translate a batch of texts in one API call. Returns (translations_dict, in_tok, out_tok, error)."""
-    from_name = LANG_NAMES.get(from_lang, from_lang)
-    to_name = LANG_NAMES.get(to_lang, to_lang)
-
-    numbered_texts = "\n".join(f"[{j+1}] {t}" for j, t in enumerate(texts))
-    prompt = (
-        f"{from_name} to {to_name}. Reply [N] translation only.\n\n{numbered_texts}"
-    )
-
-    response = gemini_model.generate_content(
-        prompt,
-        generation_config=genai.types.GenerationConfig(temperature=0.1, max_output_tokens=4096),
-    )
-    in_tok = getattr(response.usage_metadata, "prompt_token_count", 0) or 0
-    out_tok = getattr(response.usage_metadata, "candidates_token_count", 0) or 0
-
-    translations = {}
-    for line in response.text.strip().split("\n"):
-        m = re.match(r"\[(\d+)\]\s*(.*)", line.strip())
-        if m:
-            translations[int(m.group(1))] = m.group(2).strip()
-
-    return translations, in_tok, out_tok
+claude = ClaudeFallback(st.secrets)   # the translator (Claude)
 
 
 def translate_docx_in_place(doc, from_lang, to_lang):
-    total_in, total_out = 0, 0
-    errors = []
+    tokens_in, tokens_out = claude.tokens_in, claude.tokens_out
 
     # Collect full paragraph text (not individual runs) for better translation
     # Each entry: (paragraph, full_text)
@@ -106,41 +53,21 @@ def translate_docx_in_place(doc, from_lang, to_lang):
         return doc, 0, 0, []
 
     progress = st.progress(0, text="Duke përkthyer... 0%")
-
-    for batch_start in range(0, len(para_entries), BATCH_SIZE):
-        batch = para_entries[batch_start:batch_start + BATCH_SIZE]
-        texts = [text for _, _, text in batch]
-
-        translations, gemini_error = {}, None
-        try:
-            translations, in_tok, out_tok = translate_batch(texts, from_lang, to_lang)
-            total_in += in_tok
-            total_out += out_tok
-        except Exception as e:
-            gemini_error = e
-
-        error = claude.fill(texts, translations, LANG_NAMES.get(from_lang, from_lang),
-                            LANG_NAMES.get(to_lang, to_lang), gemini_error)
-        if error:
-            errors.append(error)
-
-        for j, (_, para, _) in enumerate(batch):
-            if (j + 1) in translations:
-                translated = translations[j + 1]
-                # Put all translated text in first run, clear the rest
-                if para.runs:
-                    para.runs[0].text = translated
-                    for run in para.runs[1:]:
-                        run.text = ""
-                else:
-                    para.text = translated
-
-        done = min(batch_start + BATCH_SIZE, len(para_entries))
-        pct = done / len(para_entries)
-        progress.progress(pct, text=f"Duke përkthyer... {done}/{len(para_entries)}")
+    translated, errors = claude.translate_all(
+        [text for _, _, text in para_entries], LANG_NAMES.get(from_lang, from_lang), LANG_NAMES.get(to_lang, to_lang),
+        progress=lambda done, total: progress.progress(done / total, text=f"Duke përkthyer... {done}/{total} grupe"))
+    for k, (_, para, _) in enumerate(para_entries):
+        if k in translated:
+            # all the translated text in the first run, the other runs emptied
+            if para.runs:
+                para.runs[0].text = translated[k]
+                for run in para.runs[1:]:
+                    run.text = ""
+            else:
+                para.text = translated[k]
 
     progress.empty()
-    return doc, total_in, total_out, errors
+    return doc, claude.tokens_in - tokens_in, claude.tokens_out - tokens_out, errors
 
 
 with ubo_ui.card("Ngarkoni dokumentin Word", step=1):
@@ -154,6 +81,7 @@ if uploaded_file:
         to_lang = LANGUAGE_OPTIONS_UI[to_lang_label]
 
         if st.button("Përkthe dokumentin Word", type="primary"):
+            st.session_state["word_cost_before"] = claude.cost
             doc = Document(uploaded_file)
             translated_doc, total_in, total_out, errors = translate_docx_in_place(doc, from_lang, to_lang)
 
@@ -166,14 +94,11 @@ if uploaded_file:
             else:
                 st.success("Përkthimi përfundoi me sukses!")
 
-            model_id = f"models/{MODEL_NAME}"
-            cost = calculate_gemini_cost(total_in, total_out, model_id) + claude.cost
-            claude_line = (f"  \nGemini dështoi për **{claude.texts}** tekste; i përktheu Agjenti AI "
-                           f"(**${claude.cost:.4f}**)" if claude.texts else "")
+            cost_before = st.session_state.get("word_cost_before", 0.0)
             st.info(
                 f"**Kostoja:**  \n"
                 f"Tokenë hyrës: **{total_in:,}** | Tokenë dalës: **{total_out:,}**  \n"
-                f"Kostoja: **${cost:.4f}**{claude_line}"
+                f"Kostoja: **${claude.cost - cost_before:.4f}**"
             )
 
             st.download_button(

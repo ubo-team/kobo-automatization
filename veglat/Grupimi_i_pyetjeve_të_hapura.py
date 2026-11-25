@@ -2,7 +2,7 @@ import os
 import streamlit as st
 import ubo_ui
 import pandas as pd
-import google.generativeai as genai
+import questionnaire_ai as qai
 import io
 import re
 from collections import Counter, OrderedDict
@@ -12,28 +12,17 @@ from collections import Counter, OrderedDict
 # -------------------------------
 st.set_page_config(layout="centered")
 
-# ── Gemini API setup ─────────────────────────────────────────────────────────
-GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
-genai.configure(api_key=GEMINI_API_KEY)
-
-# ── Pricing ──────────────────────────────────────────────────────────────────
-GEMINI_PRICING = {
-    "models/gemini-2.5-pro": {
-        "inputPer1MTokens_low":   1.25,
-        "outputPer1MTokens_low":  10.00,
-        "inputPer1MTokens_high":  2.50,
-        "outputPer1MTokens_high": 15.00,
-        "tier_threshold": 200_000,
-    },
-    "models/gemini-2.5-flash": {
-        "inputPer1MTokens":  0.30,
-        "outputPer1MTokens": 2.50,
-    },
-    "models/gemini-3.1-flash-lite": {
-        "inputPer1MTokens":  0.25,
-        "outputPer1MTokens": 1.50,
-    },
-}
+# ── Claude (Agjenti AI) ─────────────────────────────────────────────────────
+try:
+    CLIENT = qai.make_client(st.secrets["ANTHROPIC_API_KEY"])
+except Exception:
+    st.error("Mungon çelësi `ANTHROPIC_API_KEY` në secrets të aplikacionit.")
+    st.stop()
+DEFAULT_MODEL = st.secrets.get("CLAUDE_MODEL", qai.MODEL)
+# the configured model first; Haiku is the cheap option for long lists of answers
+MODEL_OPTIONS = list(dict.fromkeys([DEFAULT_MODEL, "claude-haiku-5-5", "claude-sonnet-5-5"]))
+SYSTEM = "You categorize the open-ended answers of survey questionnaires. Follow the instructions exactly."
+EFFORT = "low"
 
 
 _MULTI_RESP_SEP_RE = re.compile(r"\s*[,;|/]\s*|\n+| and | & ", re.IGNORECASE)
@@ -59,20 +48,6 @@ def split_multi_response(series: pd.Series, n: int) -> list[pd.Series]:
         for i in range(n):
             columns[i].append(pieces[i])
     return [pd.Series(c, dtype=object) for c in columns]
-
-
-def calculate_gemini_cost(prompt_tokens: int, completion_tokens: int, model: str) -> float:
-    pricing = GEMINI_PRICING.get(model, GEMINI_PRICING["models/gemini-2.5-pro"])
-    if "tier_threshold" in pricing:
-        high = (prompt_tokens or 0) > pricing["tier_threshold"]
-        input_rate  = pricing["inputPer1MTokens_high"]  if high else pricing["inputPer1MTokens_low"]
-        output_rate = pricing["outputPer1MTokens_high"] if high else pricing["outputPer1MTokens_low"]
-    else:
-        input_rate  = pricing["inputPer1MTokens"]
-        output_rate = pricing["outputPer1MTokens"]
-    input_cost  = ((prompt_tokens     or 0) / 1_000_000) * input_rate
-    output_cost = ((completion_tokens or 0) / 1_000_000) * output_rate
-    return round(input_cost + output_cost, 8)
 
 
 # ── Page header ──────────────────────────────────────────────────────────────
@@ -128,7 +103,7 @@ if "results" not in st.session_state:
 with st.expander("Konfigurimet", expanded=False):
     col_model, col_batch, col_lang = st.columns(3)
     with col_model:
-        model_name = st.selectbox("Modeli", ["gemini-3.1-flash-lite", "gemini-2.5-flash", "gemini-2.5-pro"], index=0)
+        model_name = st.selectbox("Modeli", MODEL_OPTIONS, index=0)
     with col_batch:
         batch_size = st.number_input("Madhësia e grupit (rreshta për thirrje)", min_value=5, max_value=100, value=20, step=5)
     with col_lang:
@@ -288,12 +263,8 @@ Rules:
 7. Do not create a category unless at least 2 responses clearly belong to it."""
 
                         try:
-                            suggest_model = genai.GenerativeModel(model_name)
-                            resp = suggest_model.generate_content(
-                                suggest_prompt,
-                                generation_config=genai.types.GenerationConfig(temperature=0.3, max_output_tokens=1024),
-                            )
-                            suggested = resp.text.strip()
+                            suggested, _ = qai._call_claude(CLIENT, SYSTEM, suggest_prompt, None, max_tokens=4096,
+                                                            effort=EFFORT, model=model_name)
                             # Clean numbered prefixes if model adds them
                             lines = []
                             for line in suggested.splitlines():
@@ -339,31 +310,22 @@ if df is not None and question_cols:
         run_btn = st.button("Kategorizo përgjigjet", type="primary")
 
         if run_btn:
-            model_id = f"models/{model_name}"
-            gemini_model = genai.GenerativeModel(model_name)
             result_df = df.copy()
-            token_counts = {"input": 0, "output": 0}
+            token_counts = {"input": 0, "output": 0, "cost": 0.0}
 
             import time
 
             MAX_RETRIES = 3
 
-            def call_gemini_batch(prompt_text: str) -> tuple[str, int, int]:
-                """Returns (text, input_tokens, output_tokens) with retry."""
+            def call_claude_batch(prompt_text: str) -> tuple[str, int, int]:
+                """Returns (text, input_tokens, output_tokens) with retry; the cost is added to token_counts."""
                 for attempt in range(MAX_RETRIES):
                     try:
-                        response = gemini_model.generate_content(
-                            prompt_text,
-                            generation_config=genai.types.GenerationConfig(
-                                max_output_tokens=4096,
-                                temperature=0,
-                            ),
-                            request_options={"timeout": 120},
-                        )
-                        in_tok = response.usage_metadata.prompt_token_count
-                        out_tok = response.usage_metadata.candidates_token_count
-                        return response.text.strip(), in_tok, out_tok
-                    except Exception as e:
+                        text, usage = qai._call_claude(CLIENT, SYSTEM, prompt_text, None, max_tokens=16000,
+                                                       effort=EFFORT, model=model_name)
+                        token_counts["cost"] += qai.estimate_cost(usage, model_name)
+                        return text, usage.input_tokens or 0, usage.output_tokens or 0
+                    except qai.AIError as e:
                         if attempt < MAX_RETRIES - 1:
                             wait = 2 ** attempt
                             st.toast(f"Provë e re {attempt+1}/{MAX_RETRIES} pas {wait}s: {e}")
@@ -372,7 +334,7 @@ if df is not None and question_cols:
                             raise e
 
             def llm_split_cells(series: pd.Series, n: int, question_label: str, split_batch_size: int = 30) -> list[pd.Series]:
-                """Use Gemini to split each non-empty cell into up to n distinct answers, using semantic
+                """Use Claude to split each non-empty cell into up to n distinct answers, using semantic
             judgment (so 'Eurostore malvesa' splits into two but 'Auto Star Mitrovica' stays as one).
             Returns a list of n pd.Series aligned with the input. Identical cells are deduplicated."""
                 cells = list(series)
@@ -421,7 +383,7 @@ Inputs:
 {numbered}"""
 
                         try:
-                            text, in_tok, out_tok = call_gemini_batch(split_prompt)
+                            text, in_tok, out_tok = call_claude_batch(split_prompt)
                             token_counts["input"] += in_tok
                             token_counts["output"] += out_tok
                             for line in text.splitlines():
@@ -551,7 +513,7 @@ Inputs:
                     )
 
                     try:
-                        text, in_tok, out_tok = call_gemini_batch(prompt)
+                        text, in_tok, out_tok = call_claude_batch(prompt)
                         token_counts["input"] += in_tok
                         token_counts["output"] += out_tok
                         batch_labels = parse_batch_response(text, len(batch_items))
@@ -574,7 +536,7 @@ Inputs:
                 return results
 
             # Expand selected columns into "virtual units": multi-response columns become N sub-units.
-            # Multi-response splitting uses Gemini so brand/place names with spaces stay intact
+            # Multi-response splitting uses Claude so brand/place names with spaces stay intact
             # (e.g. "Eurostore malvesa" → ["Eurostore","malvesa"]; "Auto Star Mitrovica" → one item).
             virtual_units = []
             for col in question_cols:
@@ -660,7 +622,7 @@ Inputs:
                 result_df[output_col] = labels
 
             # ── Cost calculation ─────────────────────────────────────────────────
-            total_cost = calculate_gemini_cost(token_counts["input"], token_counts["output"], model_id)
+            total_cost = token_counts["cost"]
 
             # Store results in session state so they persist across reruns
             output = io.BytesIO()

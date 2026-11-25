@@ -836,6 +836,7 @@ if __name__ == "__main__":
     else:
         with open(".streamlit/secrets.toml", "rb") as f:
             secrets = tomllib.load(f)
+    qai.set_backup_key(secrets.get("ANTHROPIC_API_KEY_BACKUP"))   # used when the main key runs out
     claude = qai.make_client(secrets["ANTHROPIC_API_KEY"]) if secrets.get("ANTHROPIC_API_KEY") else None
     progress = None if quiet else (lambda frac, text: print(f"\r{text[:100]:<100}", end="", flush=True))
     try:

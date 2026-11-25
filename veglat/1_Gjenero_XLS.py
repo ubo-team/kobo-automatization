@@ -87,7 +87,7 @@ SOURCE_PLAIN = "I paformatuar – AI e formaton (.docx, .xlsx, .pdf, .txt, .csv)
 
 LANG_UI = {"Shqip": "Albanian", "Anglisht": "English", "Serbisht": "Serbian"}
 TR_READY = "Pyetësori është tashmë në këtë gjuhë"
-TR_AI = "Përkthe me AI (Gemini)"
+TR_AI = "Përkthe me Agjentin AI"
 TR_MERGED = "Përkthimet janë të bashkuara në një dokument"
 TR_SEPARATE = "Përkthimet janë në dokumente të veçanta"
 
@@ -1224,18 +1224,6 @@ def get_claude_client():
     return qai.make_client(api_key)
 
 
-def get_gemini_model():
-    """Gemini model for the translations (always Gemini); None without GEMINI_TRANSLATION_API_KEY."""
-    try:
-        qtr.configure(st.secrets["GEMINI_TRANSLATION_API_KEY"])
-    except Exception:
-        return None
-    try:
-        return st.secrets.get("GEMINI_MODEL", qtr.GEMINI_MODEL)   # optional, e.g. gemini-2.5-pro
-    except Exception:
-        return qtr.GEMINI_MODEL
-
-
 def language_note():
     """Which languages Claude codes when it formats the questionnaire, from the user's choice."""
     if translation_mode == TR_MERGED:
@@ -1252,7 +1240,7 @@ def language_note():
 
 def apply_languages(lines):
     """Brings the questionnaire to the chosen languages: keeps them (already translated / merged), translates it
-    with Gemini, or merges the translation files. Returns (lines, notes, cost); raises qai.AIError."""
+    with Claude, or merges the translation files. Returns (lines, notes, cost); raises qai.AIError."""
     if translation_mode in (TR_READY, TR_MERGED):
         if translation_mode == TR_MERGED and not qai.declared_languages(lines) \
                 and not any(qai.LANG_SEP in l for l in lines):
@@ -1263,14 +1251,14 @@ def apply_languages(lines):
             missing_ui = ", ".join(ui_name.get(l, l) for l in missing)
             if translation_mode == TR_MERGED:
                 raise qai.AIError(f"Pyetësori nuk ka tekst në: {missing_ui}. Zgjidhni **'{TR_AI}'** që ta përkthejë "
-                                  f"Gemini, ose ngarkoni përkthimet si dokumente të veçanta.")
+                                  f"Agjenti AI, ose ngarkoni përkthimet si dokumente të veçanta.")
             return new_lines, [f"Pyetësori nuk ka tekst në {missing_ui}; u përdor gjuha e parë e tij."], 0.0
         return new_lines, [], 0.0
 
-    model = get_gemini_model()
-    qtr.configure_claude(get_claude_client(), qai.MODEL)   # Claude translates when Gemini fails
-    if model is None and qtr.CLAUDE is None:
-        raise qai.AIError("Mungon çelësi `GEMINI_TRANSLATION_API_KEY` në secrets të aplikacionit.")
+    model = None                                            # the translations are done by Claude
+    qtr.configure_claude(get_claude_client(), qai.MODEL)
+    if qtr.CLAUDE is None:
+        raise qai.AIError("Mungon çelësi `ANTHROPIC_API_KEY` në secrets të aplikacionit.")
     if translation_mode == TR_AI:
         return qtr.translate(lines, form_languages, model)
     references = {}
@@ -1544,10 +1532,10 @@ if uploaded_file:
                 f"**'{SOURCE_PLAIN}'** që ta formatojë AI."
             )
             st.stop()
-        # Languages: kept as they are, or translated / merged by Gemini once per setting
+        # Languages: kept as they are, or translated / merged by Claude once per setting
         if st.session_state.get("gen_lang_config") != lang_config:
             needs_ai = translation_mode in (TR_AI, TR_SEPARATE)
-            with st.spinner("Gemini po përkthen pyetësorin..." if needs_ai else "Po përgatiten gjuhët..."):
+            with st.spinner("Agjenti AI po përkthen pyetësorin..." if needs_ai else "Po përgatiten gjuhët..."):
                 try:
                     lang_result = ubo_ui.interruptible(apply_languages, doc_lines)
                 except qai.AIError as e:
@@ -1612,8 +1600,8 @@ if uploaded_file:
                             format_cost += review_cost
                         except qai.AIError as e:
                             st.warning(f"Kontrolli i dytë i pyetjeve dhe shënimeve nuk u krye: {e}")
-                # Languages: kept in the chosen order, or translated / merged by Gemini
-                with st.spinner("Gemini po përkthen pyetësorin..." if translation_mode in (TR_AI, TR_SEPARATE)
+                # Languages: kept in the chosen order, or translated / merged by Claude
+                with st.spinner("Agjenti AI po përkthen pyetësorin..." if translation_mode in (TR_AI, TR_SEPARATE)
                                 else "Po përgatiten gjuhët..."):
                     try:
                         ai_lines, lang_notes, lang_cost = ubo_ui.interruptible(apply_languages, ai_lines)
@@ -1780,7 +1768,7 @@ if uploaded_file:
 
     total_cost = st.session_state.get("gen_format_cost", 0.0)
     if questionnaire_kind == SOURCE_TAGGED and st.session_state.get("gen_lang_result"):
-        total_cost += st.session_state["gen_lang_result"][2]   # Gemini translation
+        total_cost += st.session_state["gen_lang_result"][2]   # the translation
     if st.session_state.get("gen_filter_result"):
         total_cost += st.session_state["gen_filter_result"]["cost"]
     if total_cost:

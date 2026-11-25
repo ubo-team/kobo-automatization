@@ -427,7 +427,7 @@ def show_timings():
 
 
 def interruptible(fn, *args, on_text=None, **kwargs):
-    """Runs a long AI call (Claude / Gemini) so that "Anulo kërkesën" (Streamlit's Stop) stops it at once.
+    """Runs a long AI call (Claude) so that "Anulo kërkesën" (Streamlit's Stop) stops it at once.
 
     The call runs in a thread; meanwhile the page sends a tiny update every 0.25 s, which is where Streamlit
     notices a stop request. When the page is stopped, the call gets the stop signal too

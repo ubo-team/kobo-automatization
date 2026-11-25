@@ -32,7 +32,8 @@ FALLBACK_BETA = "server-side-fallback-2026-07-01"
 REVIEW_MODEL = "claude-sonnet-5-5"
 FALLBACK_MODELS = ("claude-opus-5", "claude-sonnet-5-5")
 # USD per 1M tokens (input, output), used only for the cost estimate shown in the UI
-PRICING = {"claude-opus-5": (5.00, 25.00), "claude-sonnet-5": (2.00, 10.00), "claude-sonnet-5-5": (2.00, 10.00)}
+PRICING = {"claude-opus-5": (5.00, 25.00), "claude-opus-5-5": (4.00, 20.00), "claude-sonnet-5": (2.00, 10.00),
+           "claude-sonnet-5-5": (2.00, 10.00), "claude-haiku-5-5": (0.10, 0.50)}
 # Thinking depth per step. Formatting is mostly careful transcription and most of its cost is output
 # (thinking is billed as output), so it runs at "medium"; filters need reasoning over the routing, so
 # they ran at "high", now "medium" because "high" made them the slowest step. Raise either one to "high"
@@ -40,7 +41,7 @@ PRICING = {"claude-opus-5": (5.00, 25.00), "claude-sonnet-5": (2.00, 10.00), "cl
 CONVERT_EFFORT = "medium"
 FILTER_EFFORT = "medium"
 REVIEW_EFFORT = "medium"
-# Claude as the backup translator when Gemini fails: short texts that need little reasoning
+# Translations (Gjenero XLS, Excel, Word): short texts that need little reasoning
 TRANSLATION_EFFORT = "low"
 
 SOURCE_TYPES = ["docx", "xlsx", "pdf", "txt", "csv", "md"]
@@ -76,6 +77,51 @@ def make_client(api_key):
     return anthropic.Anthropic(api_key=api_key)
 
 
+# Backup key (ANTHROPIC_API_KEY_BACKUP in secrets, or set_backup_key): when the main key's account has no credit
+# left or reached its spending limit, every Claude call switches to it, and stays on it until the app restarts.
+BACKUP_KEY = None
+_backup = {"client": None, "active": False}
+
+
+class QuotaError(AIError):
+    """The account of the key has no credit left or reached its spending limit."""
+
+
+def set_backup_key(key):
+    global BACKUP_KEY
+    BACKUP_KEY = key or None
+
+
+def _backup_client():
+    if _backup["client"] is None:
+        key = BACKUP_KEY or os.environ.get("ANTHROPIC_API_KEY_BACKUP")
+        if not key:
+            try:
+                import streamlit as st
+                key = st.secrets.get("ANTHROPIC_API_KEY_BACKUP")
+            except Exception:
+                key = None
+        if key:
+            _backup["client"] = make_client(key)
+    return _backup["client"]
+
+
+def _call_claude(client, system, content, schema, max_tokens=64000, effort=FILTER_EFFORT, model=None):
+    """One Claude request (see _request); with the backup key when the main one has run out."""
+    backup = _backup_client() if _backup["active"] else None
+    if backup is not None:
+        return _request(backup, system, content, schema, max_tokens, effort, model)
+    try:
+        return _request(client, system, content, schema, max_tokens, effort, model)
+    except QuotaError:
+        backup = _backup_client()
+        if backup is None or backup is client:
+            raise
+        _backup["active"] = True
+        print("[claude] çelësi kryesor s'ka më kredit: po përdoret ANTHROPIC_API_KEY_BACKUP", flush=True)
+        return _request(backup, system, content, schema, max_tokens, effort, model)
+
+
 def estimate_cost(usage, model=None):
     price_in, price_out = PRICING.get(model or MODEL, PRICING["claude-opus-5"])
     # cache writes (5-minute TTL) cost 1.25x the input price, cache reads 0.1x
@@ -85,15 +131,19 @@ def estimate_cost(usage, model=None):
     return (input_cost + (usage.output_tokens or 0) * price_out) / 1_000_000
 
 
-def _call_claude(client, system, content, schema, max_tokens=64000, effort=FILTER_EFFORT, model=None):
-    """Streams one request with a JSON-schema output and returns (data, usage). model: MODEL when not given."""
+def _request(client, system, content, schema, max_tokens=64000, effort=FILTER_EFFORT, model=None):
+    """Streams one request with a JSON-schema output and returns (data, usage); with schema=None the answer is
+    plain text and (text, usage) is returned. model: MODEL when not given."""
     model = model or MODEL
+    output_config = {"effort": effort}
+    if schema is not None:
+        output_config["format"] = {"type": "json_schema", "schema": schema}
     params = dict(
         model=model,
         max_tokens=max_tokens,
         system=system,
         messages=[{"role": "user", "content": content}],
-        output_config={"effort": effort, "format": {"type": "json_schema", "schema": schema}},
+        output_config=output_config,
     )
     if model in FALLBACK_MODELS:
         params.update(betas=[FALLBACK_BETA], fallbacks="default")
@@ -104,7 +154,8 @@ def _call_claude(client, system, content, schema, max_tokens=64000, effort=FILTE
             for event in stream:        # read event by event, so a stop is noticed while Claude is writing
                 first_event = first_event or time.monotonic()
                 check_cancelled()
-                if sink is not None and event.type == "content_block_delta"                         and getattr(event.delta, "type", "") == "text_delta":
+                if (sink is not None and event.type == "content_block_delta"
+                        and getattr(event.delta, "type", "") == "text_delta"):
                     sink.append(event.delta.text)
             message = stream.get_final_message()
         # Server log: waiting for the first answer vs. writing it, and how much was written (thinking included)
@@ -118,8 +169,13 @@ def _call_claude(client, system, content, schema, max_tokens=64000, effort=FILTE
     except anthropic.RateLimitError:
         raise AIError("Kufiri i kërkesave te Agjenti AI u tejkalua. Provo përsëri pas pak minutash.")
     except anthropic.BadRequestError as e:
+        if "usage limits" in str(e.message).lower():
+            when = re.search(r"regain access on (\S+)", str(e.message))
+            raise QuotaError("Llogaria e Anthropic ka arritur kufirin e shpenzimeve që është vendosur për të"
+                          + (f" (rihapet më {when.group(1)})" if when else "") + ". Rriteni kufirin te "
+                          "console.anthropic.com → Settings → Limits dhe provoni përsëri.")
         if "credit balance" in str(e.message).lower():
-            raise AIError("Llogaria e Anthropic nuk ka kredit të mjaftueshëm. Shto kredit te "
+            raise QuotaError("Llogaria e Anthropic nuk ka kredit të mjaftueshëm. Shto kredit te "
                           "console.anthropic.com → Plans & Billing dhe provo përsëri.")
         raise AIError(f"Kërkesa te Agjenti AI u refuzua: {e.message}")
     except anthropic.APIStatusError as e:
@@ -137,6 +193,8 @@ def _call_claude(client, system, content, schema, max_tokens=64000, effort=FILTE
     blocks = list(message.content)
     start = max((i + 1 for i, b in enumerate(blocks) if b.type == "fallback"), default=0)
     text = "".join(b.text for b in blocks[start:] if b.type == "text")
+    if schema is None:
+        return text.strip(), message.usage
     try:
         return json.loads(text), message.usage
     except json.JSONDecodeError:
